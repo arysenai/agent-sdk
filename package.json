@@ -1,0 +1,34 @@
+{
+  "name": "agent-sdk",
+  "version": "0.1.0",
+  "description": "Arysen Agent SDK — TypeScript wrapper for keymod WASM modules",
+  "type": "module",
+  "main": "dist/keymod/index.js",
+  "types": "dist/keymod/index.d.ts",
+  "exports": {
+    "./keymod": {
+      "import": "./dist/keymod/index.js",
+      "types": "./dist/keymod/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "arysen-mandate": "file:../keymod/mandate/pkg",
+    "arysen-wallet": "file:../keymod/wallet/pkg"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

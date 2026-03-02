@@ -1,0 +1,186 @@
+/**
+ * ArysenKeymod — typed API wrapping the wallet and mandate WASM modules.
+ *
+ * Usage:
+ * ```ts
+ * import { ArysenKeymod } from 'agent-sdk/keymod';
+ *
+ * const keymod = await ArysenKeymod.init();
+ * const workerKey = keymod.generateWorkerKey();
+ * const sig = keymod.signWorker(message, workerKey.key_id);
+ * ```
+ */
+
+export { FileSystemStorage } from './storage-fs.js';
+export { HttpHost } from './http-host.js';
+export type {
+  KeyPairResult,
+  RequestTemplate,
+  HttpResponse,
+  Policy,
+  SpendingPolicy,
+  SecretPolicy,
+  PolicyResult,
+  SpendingSummary,
+  KeymodOptions,
+} from './types.js';
+
+import type {
+  KeyPairResult,
+  RequestTemplate,
+  HttpResponse,
+  Policy,
+  PolicyResult,
+  SpendingSummary,
+  KeymodOptions,
+} from './types.js';
+
+import { loadWalletModule, loadMandateModule } from './loader.js';
+import type { WalletExports, MandateExports } from './loader.js';
+
+// -------------------------------------------------------------------------
+// serde-wasm-bindgen returns JS Map objects for Rust structs/hashmaps.
+// We convert them to plain objects recursively for ergonomic TypeScript use.
+// -------------------------------------------------------------------------
+
+function mapToObject(value: unknown): unknown {
+  if (value instanceof Map) {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of value) {
+      obj[String(k)] = mapToObject(v);
+    }
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map(mapToObject);
+  }
+  return value;
+}
+
+export class ArysenKeymod {
+  private readonly wallet: WalletExports;
+  private readonly mandate: MandateExports;
+
+  private constructor(wallet: WalletExports, mandate: MandateExports) {
+    this.wallet = wallet;
+    this.mandate = mandate;
+  }
+
+  /**
+   * Initialize both WASM modules and return a ready-to-use instance.
+   */
+  static async init(options?: KeymodOptions): Promise<ArysenKeymod> {
+    // Both modules load synchronously (wasm-pack nodejs target reads the
+    // .wasm file from disk synchronously), but we keep the API async for
+    // future compatibility if we switch to async instantiation.
+    const wallet = loadWalletModule(options?.walletWasmPath);
+    const mandate = loadMandateModule(options?.mandateWasmPath);
+    return new ArysenKeymod(wallet, mandate);
+  }
+
+  // ------------------------------------------------------------------
+  // Wallet operations
+  // ------------------------------------------------------------------
+
+  /** Generate an Ed25519 worker keypair. */
+  generateWorkerKey(): KeyPairResult {
+    return mapToObject(this.wallet.generate_worker_keypair()) as KeyPairResult;
+  }
+
+  /** Generate a secp256k1 session keypair. */
+  generateSessionKey(): KeyPairResult {
+    return mapToObject(this.wallet.generate_session_keypair()) as KeyPairResult;
+  }
+
+  /** Sign a message with the worker (Ed25519) key. */
+  signWorker(message: Uint8Array, keyId: string): Uint8Array {
+    return this.wallet.sign_worker(message, keyId);
+  }
+
+  /** Sign a message with the session (secp256k1) key. */
+  signSession(message: Uint8Array, keyId: string): Uint8Array {
+    return this.wallet.sign_session(message, keyId);
+  }
+
+  /** Verify an Ed25519 worker signature. */
+  verifyWorker(message: Uint8Array, signature: Uint8Array, pubKey: Uint8Array): boolean {
+    return this.wallet.verify_worker(message, signature, pubKey);
+  }
+
+  /** Verify a secp256k1 session signature. */
+  verifySession(message: Uint8Array, signature: Uint8Array, pubKey: Uint8Array): boolean {
+    return this.wallet.verify_session(message, signature, pubKey);
+  }
+
+  /** Get the SHA-256 hash of the wallet WASM module binary. */
+  getWalletModuleHash(): Uint8Array {
+    return this.wallet.get_module_hash();
+  }
+
+  // ------------------------------------------------------------------
+  // Mandate operations — secrets
+  // ------------------------------------------------------------------
+
+  /**
+   * Deposit a secret by name. The value is stored in the WASM module's
+   * internal vault (encrypted internally by the Rust code).
+   */
+  depositSecret(name: string, value: string): boolean {
+    const encoder = new TextEncoder();
+    return this.mandate.deposit_secret(name, encoder.encode(value));
+  }
+
+  /** Remove a secret by name. Returns true if the secret existed. */
+  removeSecret(name: string): boolean {
+    return this.mandate.remove_secret(name);
+  }
+
+  /** List all stored secret names (values are never exposed). */
+  listSecrets(): string[] {
+    const raw = this.mandate.list_secret_names();
+    // serde-wasm-bindgen returns a plain Array for Vec<String>
+    return raw as string[];
+  }
+
+  // ------------------------------------------------------------------
+  // Mandate operations — request execution
+  // ------------------------------------------------------------------
+
+  /**
+   * Execute a request template with credential injection.
+   *
+   * Placeholders like `{SECRET_NAME}` in the template's URL, headers,
+   * or body are replaced with the corresponding secret values. The
+   * response is scrubbed of any injected secret values before being
+   * returned.
+   */
+  executeRequest(template: RequestTemplate): HttpResponse {
+    const result = this.mandate.execute_request(JSON.stringify(template));
+    return mapToObject(result) as HttpResponse;
+  }
+
+  // ------------------------------------------------------------------
+  // Mandate operations — policy
+  // ------------------------------------------------------------------
+
+  /** Set the spending/rate-limit policy. */
+  setPolicy(policy: Policy): boolean {
+    return this.mandate.set_policy(JSON.stringify(policy));
+  }
+
+  /** Check whether an action is permitted under the current policy. */
+  checkPolicy(action: string, params: Record<string, unknown>): PolicyResult {
+    const result = this.mandate.check_policy(action, JSON.stringify(params));
+    return mapToObject(result) as PolicyResult;
+  }
+
+  /** Get spending usage statistics. */
+  getSpendingSummary(): SpendingSummary {
+    return mapToObject(this.mandate.get_spending_summary()) as SpendingSummary;
+  }
+
+  /** Get the SHA-256 hash of the mandate WASM module binary. */
+  getMandateModuleHash(): Uint8Array {
+    return this.mandate.get_module_hash();
+  }
+}
