@@ -18,7 +18,9 @@ import Module from 'node:module';
 
 export interface WalletExports {
   generate_session_keypair(): unknown;
+  generate_session_keypair_with_secret(): unknown;
   generate_worker_keypair(): unknown;
+  generate_worker_keypair_with_secret(): unknown;
   get_module_hash(): Uint8Array;
   sign_session(message: Uint8Array, key_id: string): Uint8Array;
   sign_worker(message: Uint8Array, key_id: string): Uint8Array;
@@ -34,9 +36,11 @@ export interface MandateExports {
   check_policy(action: string, params_json: string): unknown;
   deposit_secret(name: string, encrypted_value: Uint8Array): boolean;
   execute_request(template_json: string): unknown;
-  get_module_hash(): Uint8Array;
+  get_mandate_hash(): Uint8Array;
+  get_mandate_info(): unknown;
   get_spending_summary(): unknown;
   list_secret_names(): unknown;
+  mandate_init(config_json: string): unknown;
   remove_secret(name: string): boolean;
   set_policy(policy_json: string): boolean;
 }

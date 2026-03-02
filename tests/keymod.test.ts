@@ -40,7 +40,9 @@ describe('loader', () => {
     expect(typeof mandate.set_policy).toBe('function');
     expect(typeof mandate.check_policy).toBe('function');
     expect(typeof mandate.get_spending_summary).toBe('function');
-    expect(typeof mandate.get_module_hash).toBe('function');
+    expect(typeof mandate.get_mandate_hash).toBe('function');
+    expect(typeof mandate.mandate_init).toBe('function');
+    expect(typeof mandate.get_mandate_info).toBe('function');
   });
 });
 
@@ -79,6 +81,28 @@ describe('ArysenKeymod', () => {
       // secp256k1 compressed public key is 33 bytes = 66 hex chars
       expect(result.pub_key).toMatch(/^[0-9a-f]{66}$/);
       expect(result.key_id).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    it('generates a worker keypair with secret', () => {
+      const result = keymod.generateWorkerKeyWithSecret();
+      expect(result).toHaveProperty('pub_key');
+      expect(result).toHaveProperty('key_id');
+      expect(result).toHaveProperty('private_key');
+      expect(result.pub_key).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.key_id).toMatch(/^[0-9a-f]{16}$/);
+      // Ed25519 private key is 32 bytes = 64 hex chars
+      expect(result.private_key).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('generates a session keypair with secret', () => {
+      const result = keymod.generateSessionKeyWithSecret();
+      expect(result).toHaveProperty('pub_key');
+      expect(result).toHaveProperty('key_id');
+      expect(result).toHaveProperty('private_key');
+      expect(result.pub_key).toMatch(/^[0-9a-f]{66}$/);
+      expect(result.key_id).toMatch(/^[0-9a-f]{16}$/);
+      // secp256k1 private key is 32 bytes = 64 hex chars
+      expect(result.private_key).toMatch(/^[0-9a-f]{64}$/);
     });
 
     it('generates unique keys each time', () => {

@@ -10,6 +10,12 @@ export interface KeyPairResult {
   key_id: string;
 }
 
+/** Keypair result with private key included (used internally for cross-module key sharing). */
+export interface KeyPairWithSecret extends KeyPairResult {
+  /** Hex-encoded private key. Only returned by *_with_secret() exports. */
+  private_key: string;
+}
+
 /** HTTP request template — used for credential-injected requests. */
 export interface RequestTemplate {
   method: string;
@@ -72,6 +78,12 @@ export interface BackendConfig {
   worker_key_id: string;
   /** Key ID of the session keypair for signing transactions. */
   session_key_id: string;
+}
+
+/** Extended config for mandate_init — includes worker private key for signing. */
+export interface InitConfig extends BackendConfig {
+  /** Hex-encoded Ed25519 private key (32 bytes). */
+  worker_private_key_hex: string;
 }
 
 /** Mandate info returned by GET /mandates/mine. */

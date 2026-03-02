@@ -15,6 +15,7 @@ export { FileSystemStorage } from './storage-fs.js';
 export { HttpHost } from './http-host.js';
 export type {
   KeyPairResult,
+  KeyPairWithSecret,
   RequestTemplate,
   HttpResponse,
   Policy,
@@ -22,16 +23,24 @@ export type {
   SecretPolicy,
   PolicyResult,
   SpendingSummary,
+  BackendConfig,
+  InitConfig,
+  MandateInfo,
+  TransferResult,
+  DealOrderParams,
   KeymodOptions,
 } from './types.js';
 
 import type {
   KeyPairResult,
+  KeyPairWithSecret,
   RequestTemplate,
   HttpResponse,
   Policy,
   PolicyResult,
   SpendingSummary,
+  InitConfig,
+  MandateInfo,
   KeymodOptions,
 } from './types.js';
 
@@ -87,9 +96,19 @@ export class ArysenKeymod {
     return mapToObject(this.wallet.generate_worker_keypair()) as KeyPairResult;
   }
 
+  /** Generate an Ed25519 worker keypair and return the private key. */
+  generateWorkerKeyWithSecret(): KeyPairWithSecret {
+    return mapToObject(this.wallet.generate_worker_keypair_with_secret()) as KeyPairWithSecret;
+  }
+
   /** Generate a secp256k1 session keypair. */
   generateSessionKey(): KeyPairResult {
     return mapToObject(this.wallet.generate_session_keypair()) as KeyPairResult;
+  }
+
+  /** Generate a secp256k1 session keypair and return the private key. */
+  generateSessionKeyWithSecret(): KeyPairWithSecret {
+    return mapToObject(this.wallet.generate_session_keypair_with_secret()) as KeyPairWithSecret;
   }
 
   /** Sign a message with the worker (Ed25519) key. */
@@ -181,6 +200,28 @@ export class ArysenKeymod {
 
   /** Get the SHA-256 hash of the mandate WASM module binary. */
   getMandateModuleHash(): Uint8Array {
-    return this.mandate.get_module_hash();
+    return this.mandate.get_mandate_hash();
+  }
+
+  // ------------------------------------------------------------------
+  // Mandate operations — backend communication
+  // ------------------------------------------------------------------
+
+  /**
+   * Initialize the mandate module with backend configuration.
+   *
+   * Fetches the active mandate from the backend, hydrates the policy
+   * engine with on-chain limits, and stores the worker private key
+   * for signing subsequent backend requests.
+   */
+  initMandate(config: InitConfig): MandateInfo {
+    const result = this.mandate.mandate_init(JSON.stringify(config));
+    return mapToObject(result) as MandateInfo;
+  }
+
+  /** Fetch current mandate info from the backend. */
+  getMandateInfo(): MandateInfo {
+    const result = this.mandate.get_mandate_info();
+    return mapToObject(result) as MandateInfo;
   }
 }
