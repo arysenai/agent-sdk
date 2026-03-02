@@ -41,6 +41,8 @@ import type {
   SpendingSummary,
   InitConfig,
   MandateInfo,
+  TransferResult,
+  DealOrderParams,
   KeymodOptions,
 } from './types.js';
 
@@ -223,5 +225,32 @@ export class ArysenKeymod {
   getMandateInfo(): MandateInfo {
     const result = this.mandate.get_mandate_info();
     return mapToObject(result) as MandateInfo;
+  }
+
+  // ------------------------------------------------------------------
+  // Mandate operations — transactions
+  // ------------------------------------------------------------------
+
+  /**
+   * Transfer USDC to an address.
+   *
+   * Executes the full 5-step flow: local pre-flight → backend check →
+   * prepare tx → sign with session key → submit → record spending.
+   * Requires prior call to `initMandate()`.
+   */
+  transferUsdc(to: string, amount: string): TransferResult {
+    const result = this.mandate.transfer_usdc(to, amount);
+    return mapToObject(result) as TransferResult;
+  }
+
+  /**
+   * Create a DealOrder with escrowed USDC.
+   *
+   * Same flow as transferUsdc but with type "escrow" and deal-specific params.
+   * Requires prior call to `initMandate()`.
+   */
+  createDealOrder(params: DealOrderParams): TransferResult {
+    const result = this.mandate.create_deal_order(JSON.stringify(params));
+    return mapToObject(result) as TransferResult;
   }
 }

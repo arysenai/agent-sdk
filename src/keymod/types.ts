@@ -80,10 +80,12 @@ export interface BackendConfig {
   session_key_id: string;
 }
 
-/** Extended config for mandate_init — includes worker private key for signing. */
+/** Extended config for mandate_init — includes worker + session private keys. */
 export interface InitConfig extends BackendConfig {
   /** Hex-encoded Ed25519 private key (32 bytes). */
   worker_private_key_hex: string;
+  /** Hex-encoded secp256k1 private key (32 bytes). */
+  session_private_key_hex: string;
 }
 
 /** Mandate info returned by GET /mandates/mine. */

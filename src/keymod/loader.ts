@@ -34,6 +34,7 @@ export interface WalletExports {
 
 export interface MandateExports {
   check_policy(action: string, params_json: string): unknown;
+  create_deal_order(params_json: string): unknown;
   deposit_secret(name: string, encrypted_value: Uint8Array): boolean;
   execute_request(template_json: string): unknown;
   get_mandate_hash(): Uint8Array;
@@ -43,6 +44,7 @@ export interface MandateExports {
   mandate_init(config_json: string): unknown;
   remove_secret(name: string): boolean;
   set_policy(policy_json: string): boolean;
+  transfer_usdc(to: string, amount: string): unknown;
 }
 
 // -------------------------------------------------------------------------

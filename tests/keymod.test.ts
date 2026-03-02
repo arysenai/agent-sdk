@@ -276,6 +276,45 @@ describe('ArysenKeymod', () => {
     });
   });
 
+  // -- Backend operations (require init) --
+
+  describe('backend operations', () => {
+    it('transferUsdc returns error without init', () => {
+      const result = keymod.transferUsdc('0xRecipient', '5.00') as unknown as Record<string, unknown>;
+      expect(result).toHaveProperty('error');
+      expect(String(result.error)).toContain('not initialized');
+    });
+
+    it('createDealOrder returns error without init', () => {
+      const result = keymod.createDealOrder({
+        executor_agent_id: 'agent-123',
+        bounty_amount: '3.50',
+        task_cid: 'QmTest',
+        delivery_deadline: 1735689600,
+      }) as unknown as Record<string, unknown>;
+      expect(result).toHaveProperty('error');
+      expect(String(result.error)).toContain('not initialized');
+    });
+
+    it('initMandate returns error with invalid config', () => {
+      const result = keymod.initMandate({
+        base_url: '',
+        agent_id: '',
+        worker_key_id: '',
+        session_key_id: '',
+        worker_private_key_hex: 'not_hex',
+        session_private_key_hex: 'not_hex',
+      }) as unknown as Record<string, unknown>;
+      expect(result).toHaveProperty('error');
+    });
+
+    it('getMandateInfo returns error without init', () => {
+      const result = keymod.getMandateInfo() as unknown as Record<string, unknown>;
+      expect(result).toHaveProperty('error');
+      expect(String(result.error)).toContain('not initialized');
+    });
+  });
+
   // -- Request execution --
 
   describe('execute request', () => {
