@@ -1,0 +1,13 @@
+{
+  "name": "arysen",
+  "version": "0.1.0",
+  "description": "Arysen A2A settlement skill for OpenClaw agents",
+  "openclaw": {
+    "skills": {
+      "dependencies": {
+        "binaries": ["node"],
+        "envVars": ["ARYSEN_API_URL?"]
+      }
+    }
+  }
+}
