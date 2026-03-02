@@ -126,7 +126,7 @@ module.exports = {
   key_store_read: function() { return -1; },
   key_store_write: function() { return 0; },
   get_random_bytes: function() { return 0; },
-  get_time: function() { return BigInt(0); },
+  get_time: function() { return BigInt(Math.floor(Date.now() / 1000)); },
   http_execute: function() { return 0; },
 };
 `;

@@ -92,26 +92,25 @@ describe('ArysenKeymod', () => {
   // -- Signing --
 
   describe('signing', () => {
-    it('signWorker returns a 64-byte Uint8Array (stub — key store not yet wired)', () => {
-      // The WASM sign function is currently a stub: it returns 64 zero bytes
-      // because the host key_store_read import is not connected to retrieve
-      // the private key. Full sign/verify roundtrip will work once the key
-      // store host import is implemented.
+    it('signWorker returns a real 64-byte Ed25519 signature', () => {
       const kp = keymod.generateWorkerKey();
       const message = new TextEncoder().encode('hello world');
       const signature = keymod.signWorker(message, kp.key_id);
 
       expect(signature).toBeInstanceOf(Uint8Array);
       expect(signature.length).toBe(64);
+      // Should be a real signature (not all zeros)
+      expect(signature.some((b: number) => b !== 0)).toBe(true);
     });
 
-    it('signSession returns a Uint8Array (stub — key store not yet wired)', () => {
+    it('signSession returns a real 65-byte secp256k1 signature', () => {
       const kp = keymod.generateSessionKey();
       const message = new TextEncoder().encode('transaction data');
       const signature = keymod.signSession(message, kp.key_id);
 
       expect(signature).toBeInstanceOf(Uint8Array);
-      expect(signature.length).toBeGreaterThan(0);
+      expect(signature.length).toBe(65);
+      expect(signature.some((b: number) => b !== 0)).toBe(true);
     });
 
     it('verifyWorker rejects an invalid signature', () => {
@@ -132,23 +131,26 @@ describe('ArysenKeymod', () => {
       expect(valid).toBe(false);
     });
 
-    // Full roundtrip test — will pass once key store host import is connected.
-    // Skipped for now because sign() returns stub zeros without key store.
-    it.skip('sign and verify worker (Ed25519) roundtrip', () => {
+    it('sign and verify worker (Ed25519) roundtrip', () => {
       const kp = keymod.generateWorkerKey();
       const message = new TextEncoder().encode('hello world');
       const signature = keymod.signWorker(message, kp.key_id);
       const pubKeyBytes = hexToBytes(kp.pub_key);
+      expect(signature.length).toBe(64);
+      // Signature should not be all zeros (key store is wired up)
+      expect(signature.some((b: number) => b !== 0)).toBe(true);
       expect(keymod.verifyWorker(message, signature, pubKeyBytes)).toBe(true);
       const wrongMsg = new TextEncoder().encode('wrong');
       expect(keymod.verifyWorker(wrongMsg, signature, pubKeyBytes)).toBe(false);
     });
 
-    it.skip('sign and verify session (secp256k1) roundtrip', () => {
+    it('sign and verify session (secp256k1) roundtrip', () => {
       const kp = keymod.generateSessionKey();
       const message = new TextEncoder().encode('transaction data');
       const signature = keymod.signSession(message, kp.key_id);
       const pubKeyBytes = hexToBytes(kp.pub_key);
+      expect(signature.length).toBe(65);
+      expect(signature.some((b: number) => b !== 0)).toBe(true);
       expect(keymod.verifySession(message, signature, pubKeyBytes)).toBe(true);
       const wrongMsg = new TextEncoder().encode('tampered');
       expect(keymod.verifySession(wrongMsg, signature, pubKeyBytes)).toBe(false);
