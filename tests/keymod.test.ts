@@ -213,7 +213,7 @@ describe('ArysenKeymod', () => {
         spending: {
           max_per_tx: 1000,
           max_daily: 5000,
-          max_monthly: 50000,
+          expires_at: undefined,
         },
         secrets: {},
       };
@@ -230,7 +230,7 @@ describe('ArysenKeymod', () => {
         spending: {
           max_per_tx: 1000,
           max_daily: 5000,
-          max_monthly: 50000,
+          expires_at: undefined,
         },
         secrets: {},
       };
@@ -244,10 +244,8 @@ describe('ArysenKeymod', () => {
     it('spending summary returns numeric fields', () => {
       const summary = keymod.getSpendingSummary();
       expect(summary).toHaveProperty('today');
-      expect(summary).toHaveProperty('this_month');
       expect(summary).toHaveProperty('total_all_time');
       expect(typeof summary.today).toBe('number');
-      expect(typeof summary.this_month).toBe('number');
       expect(typeof summary.total_all_time).toBe('number');
     });
   });

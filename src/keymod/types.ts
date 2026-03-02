@@ -35,7 +35,8 @@ export interface Policy {
 export interface SpendingPolicy {
   max_per_tx: number;
   max_daily: number;
-  max_monthly: number;
+  /** Unix timestamp when this mandate expires. Omit for no expiry. */
+  expires_at?: number;
 }
 
 /** Per-secret access policy. */
@@ -54,8 +55,47 @@ export interface PolicyResult {
 /** Spending usage summary. */
 export interface SpendingSummary {
   today: number;
-  this_month: number;
   total_all_time: number;
+}
+
+// ---------------------------------------------------------------------------
+// Backend communication types (Phase 9+)
+// ---------------------------------------------------------------------------
+
+/** Configuration for initializing the keymod with backend connection. */
+export interface BackendConfig {
+  /** Base URL of the Arysen backend (e.g. "https://api.arysen.ai"). */
+  base_url: string;
+  /** Agent UUID. */
+  agent_id: string;
+  /** Key ID of the worker keypair for signing requests. */
+  worker_key_id: string;
+  /** Key ID of the session keypair for signing transactions. */
+  session_key_id: string;
+}
+
+/** Mandate info returned by GET /mandates/mine. */
+export interface MandateInfo {
+  mandate_id: string;
+  max_per_tx: string;
+  max_daily: string;
+  daily_spent: number;
+  wallet_address: string;
+  expires_at: string;
+  serialized_permission: string;
+}
+
+/** Result of a USDC transfer or DealOrder escrow. */
+export interface TransferResult {
+  tx_hash: string;
+}
+
+/** Parameters for creating a DealOrder. */
+export interface DealOrderParams {
+  executor_agent_id: string;
+  bounty_amount: string;
+  task_cid: string;
+  delivery_deadline: number;
 }
 
 /** Options for initializing the ArysenKeymod instance. */
