@@ -10,6 +10,18 @@ export interface KeyPairResult {
   key_id: string;
 }
 
+/** Result of mandate_generate_keys — both keypairs, public keys only. */
+export interface GeneratedKeys {
+  /** Hex-encoded Ed25519 public key (32 bytes → 64 chars). */
+  worker_pub_key: string;
+  /** Key ID for the worker keypair. */
+  worker_key_id: string;
+  /** Hex-encoded secp256k1 compressed public key (33 bytes → 66 chars). */
+  session_pub_key: string;
+  /** Key ID for the session keypair. */
+  session_key_id: string;
+}
+
 /** Keypair result with private key included (used internally for cross-module key sharing). */
 export interface KeyPairWithSecret extends KeyPairResult {
   /** Hex-encoded private key. Only returned by *_with_secret() exports. */
@@ -80,12 +92,13 @@ export interface BackendConfig {
   session_key_id: string;
 }
 
-/** Extended config for mandate_init — includes worker + session private keys. */
+/** Extended config for mandate_init — includes worker + session private keys.
+ *  Private key fields are optional when using generateKeys() first. */
 export interface InitConfig extends BackendConfig {
-  /** Hex-encoded Ed25519 private key (32 bytes). */
-  worker_private_key_hex: string;
-  /** Hex-encoded secp256k1 private key (32 bytes). */
-  session_private_key_hex: string;
+  /** Hex-encoded Ed25519 private key (32 bytes). Optional if generateKeys() was called. */
+  worker_private_key_hex?: string;
+  /** Hex-encoded secp256k1 private key (32 bytes). Optional if generateKeys() was called. */
+  session_private_key_hex?: string;
 }
 
 /** Mandate info returned by GET /mandates/mine. */

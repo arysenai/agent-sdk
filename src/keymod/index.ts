@@ -16,6 +16,7 @@ export { HttpHost } from './http-host.js';
 export type {
   KeyPairResult,
   KeyPairWithSecret,
+  GeneratedKeys,
   RequestTemplate,
   HttpResponse,
   Policy,
@@ -34,6 +35,7 @@ export type {
 import type {
   KeyPairResult,
   KeyPairWithSecret,
+  GeneratedKeys,
   RequestTemplate,
   HttpResponse,
   Policy,
@@ -208,6 +210,17 @@ export class ArysenKeymod {
   // ------------------------------------------------------------------
   // Mandate operations — backend communication
   // ------------------------------------------------------------------
+
+  /**
+   * Generate both keypairs (Ed25519 worker + secp256k1 session) inside WASM.
+   *
+   * Private keys stay inside the WASM module and never cross the JS boundary.
+   * Returns only public keys and key IDs. Call this before initMandate() —
+   * the generated keys will be used automatically for signing.
+   */
+  generateKeys(): GeneratedKeys {
+    return mapToObject(this.mandate.mandate_generate_keys()) as GeneratedKeys;
+  }
 
   /**
    * Initialize the mandate module with backend configuration.
