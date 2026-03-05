@@ -31,7 +31,7 @@ describe('loader', () => {
   });
 
   it('loads the mandate WASM module', () => {
-    const mandate = loadMandateModule();
+    const { mandate } = loadMandateModule();
     expect(mandate).toBeDefined();
     expect(typeof mandate.deposit_secret).toBe('function');
     expect(typeof mandate.remove_secret).toBe('function');

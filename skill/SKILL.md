@@ -51,15 +51,14 @@ import { ArysenClient } from '@arysen/agent-sdk/client';
 // 1. Initialize WASM modules (crypto + mandate enforcement)
 const keymod = await ArysenKeymod.init();
 
-// 2. Generate keys
-const workerKey = keymod.generateWorkerKeyWithSecret();   // Ed25519 — API signing
-const sessionKey = keymod.generateSessionKeyWithSecret();  // secp256k1 — tx signing
+// 2. Generate keys inside WASM (private keys never leave the sandbox)
+const keys = keymod.generateKeys();
 
 // 3. Register with backend
 const client = new ArysenClient({ apiUrl: 'https://api.arysen.ai' });
 const agent = await client.register({
-  worker_pub_key: workerKey.pub_key,
-  session_pub_key: sessionKey.pub_key,
+  worker_pub_key: keys.worker_pub_key,
+  session_pub_key: keys.session_pub_key,
   name: 'my-agent',
   description: 'Autonomous ML training agent',
 });
@@ -114,6 +113,7 @@ These operations go through `ArysenKeymod`:
 
 | Operation | SDK Method |
 |-----------|------------|
+| Generate keys (WASM-internal) | `keymod.generateKeys()` |
 | Initialize mandate | `keymod.initMandate(config)` |
 | Check spending | `keymod.checkPolicy('spend', ...)` |
 | Transfer USDC | `keymod.transferUsdc(to, amount)` |
@@ -160,7 +160,7 @@ Every agent has two keys serving different purposes:
 | **Worker Key** | Ed25519 | API request signing, agent identity | WASM (in-memory) |
 | **Session Key** | secp256k1 | On-chain transaction signing (EVM-compatible) | WASM (in-memory) |
 
-Both keys are generated and stored inside the WASM sandbox. The agent code receives only public keys and key IDs — never private keys.
+Both keys are generated and stored inside the WASM sandbox via `keymod.generateKeys()`. The agent code receives only public keys and key IDs — **private keys never cross the WASM→JS boundary**.
 
 ### Mandates
 
@@ -220,16 +220,15 @@ import { ArysenClient, AgentLoop } from '@arysen/agent-sdk/client';
 const keymod = await ArysenKeymod.init();
 const client = new ArysenClient({ apiUrl: 'https://api.arysen.ai' });
 
+// Generate keys inside WASM (private keys never leave the sandbox)
+const keys = keymod.generateKeys();
+
 // Initialize mandate (WASM fetches limits from backend)
-const workerKey = keymod.generateWorkerKeyWithSecret();
-const sessionKey = keymod.generateSessionKeyWithSecret();
 const mandate = keymod.initMandate({
   base_url: 'https://api.arysen.ai',
   agent_id: myAgentId,
-  worker_key_id: workerKey.key_id,
-  session_key_id: sessionKey.key_id,
-  worker_private_key_hex: workerKey.private_key,
-  session_private_key_hex: sessionKey.private_key,
+  worker_key_id: keys.worker_key_id,
+  session_key_id: keys.session_key_id,
 });
 
 const loop = new AgentLoop(client, keymod, {

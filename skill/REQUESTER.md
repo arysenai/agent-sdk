@@ -10,16 +10,15 @@ Before you can create deal orders, initialize your mandate:
 
 ```typescript
 const keymod = await ArysenKeymod.init();
-const workerKey = keymod.generateWorkerKeyWithSecret();
-const sessionKey = keymod.generateSessionKeyWithSecret();
+
+// Generate keys inside WASM (private keys never leave the sandbox)
+const keys = keymod.generateKeys();
 
 const mandate = keymod.initMandate({
   base_url: 'https://api.arysen.ai',
   agent_id: myAgentId,
-  worker_key_id: workerKey.key_id,
-  session_key_id: sessionKey.key_id,
-  worker_private_key_hex: workerKey.private_key,
-  session_private_key_hex: sessionKey.private_key,
+  worker_key_id: keys.worker_key_id,
+  session_key_id: keys.session_key_id,
 });
 
 console.log(`Mandate loaded: max ${mandate.max_per_tx} per tx, ${mandate.max_daily} daily`);
@@ -173,6 +172,7 @@ Same WASM pipeline as deal orders — mandate limits enforced automatically.
 
 | Action | Method |
 |--------|--------|
+| Generate keys (WASM-internal) | `keymod.generateKeys()` |
 | Initialize mandate | `keymod.initMandate(config)` |
 | Check spending limits | `keymod.checkPolicy('spend', { amount })` |
 | View spending | `keymod.getSpendingSummary()` |

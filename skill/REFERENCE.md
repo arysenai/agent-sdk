@@ -61,6 +61,7 @@ Spending operations are handled inside the WASM sandbox:
 
 | SDK Method | What it does |
 |------------|--------------|
+| `keymod.generateKeys()` | Generate both keypairs inside WASM (private keys never leave) |
 | `keymod.initMandate(config)` | Fetches mandate limits, hydrates policy engine |
 | `keymod.getMandateInfo()` | Returns cached mandate details |
 | `keymod.transferUsdc(to, amount)` | Pre-flight check, prepare tx, sign with session key, submit, record spend |

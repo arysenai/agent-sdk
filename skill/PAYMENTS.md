@@ -50,17 +50,18 @@ A **mandate** is a human-signed authorization granting you (the agent) limited s
 Your human creates the mandate via the dashboard (passkey/biometric signing). Then you initialize it in WASM:
 
 ```typescript
+// Generate keys inside WASM first (private keys never leave the sandbox)
+const keys = keymod.generateKeys();
+
 const mandate = keymod.initMandate({
   base_url: 'https://api.arysen.ai',
   agent_id: myAgentId,
-  worker_key_id: workerKey.key_id,
-  session_key_id: sessionKey.key_id,
-  worker_private_key_hex: workerKey.private_key,
-  session_private_key_hex: sessionKey.private_key,
+  worker_key_id: keys.worker_key_id,
+  session_key_id: keys.session_key_id,
 });
 ```
 
-The WASM module fetches mandate details and hydrates its policy engine. All subsequent spending checks happen locally first, then are confirmed by the backend.
+The WASM module fetches mandate details and hydrates its policy engine. Private keys are generated and held inside WASM — they never cross to JavaScript. All subsequent spending checks happen locally first, then are confirmed by the backend.
 
 ### Querying
 

@@ -4,12 +4,15 @@
  * Loads the wasm-pack generated CJS packages (`arysen-wallet`, `arysen-mandate`)
  * from an ESM context using `createRequire`. The mandate module requires host
  * imports via an `env` WASM import module — we intercept Node's module
- * resolution to provide stub implementations.
+ * resolution to provide an env shim with a real `http_execute` backed by
+ * a Worker thread (SharedArrayBuffer + Atomics for sync↔async bridging).
  */
 
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import Module from 'node:module';
 
 // -------------------------------------------------------------------------
@@ -61,6 +64,108 @@ export interface HostImports {
 }
 
 // -------------------------------------------------------------------------
+// HTTP bridge — SharedArrayBuffer + Worker for sync↔async HTTP
+// -------------------------------------------------------------------------
+
+const SIGNAL_BUF_SIZE = 16;  // 4 x Int32
+const DATA_BUF_SIZE = 262144; // 256KB for request/response JSON
+const DEFAULT_HTTP_TIMEOUT = 30_000;
+
+interface HttpBridge {
+  worker: Worker;
+  signal: Int32Array;
+  data: Uint8Array;
+  wasmMemory: WebAssembly.Memory | null;
+}
+
+/** Global bridge — set before mandate module loads, used by env shim. */
+declare global {
+  // eslint-disable-next-line no-var
+  var __arysenHttpBridge: HttpBridge | undefined;
+}
+
+function createHttpBridge(httpTimeout?: number): HttpBridge {
+  const signalBuf = new SharedArrayBuffer(SIGNAL_BUF_SIZE);
+  const dataBuf = new SharedArrayBuffer(DATA_BUF_SIZE);
+
+  // Resolve the worker path relative to this file's location.
+  // In compiled output it's http-worker.js; in vitest/tsx it's http-worker.ts.
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  let workerPath = resolve(thisDir, 'http-worker.js');
+  if (!existsSync(workerPath)) {
+    workerPath = resolve(thisDir, 'http-worker.ts');
+  }
+
+  const worker = new Worker(workerPath, {
+    workerData: {
+      signalBuf,
+      dataBuf,
+      timeout: httpTimeout ?? DEFAULT_HTTP_TIMEOUT,
+    },
+    // When running .ts directly (vitest / node --experimental-strip-types),
+    // the worker needs the same TypeScript support flags.
+    ...(workerPath.endsWith('.ts') ? { execArgv: ['--experimental-strip-types'] } : {}),
+  });
+
+  // Don't let the worker keep the process alive
+  worker.unref();
+
+  return {
+    worker,
+    signal: new Int32Array(signalBuf),
+    data: new Uint8Array(dataBuf),
+    wasmMemory: null,
+  };
+}
+
+/**
+ * Synchronous HTTP execute — called from the env shim during WASM execution.
+ *
+ * Reads request JSON from WASM memory, sends to Worker thread via
+ * SharedArrayBuffer, blocks with Atomics.wait until response arrives,
+ * writes response back to WASM memory.
+ */
+function httpExecuteSync(
+  bridge: HttpBridge,
+  reqPtr: number, reqLen: number,
+  respPtr: number, respLen: number,
+): number {
+  if (!bridge.wasmMemory) return -1;
+
+  // Read request JSON from WASM linear memory
+  const wasmBuf = new Uint8Array(bridge.wasmMemory.buffer);
+  const reqBytes = wasmBuf.slice(reqPtr, reqPtr + reqLen);
+
+  // Copy request to shared data buffer
+  if (reqBytes.length > bridge.data.length) return -2;
+  bridge.data.set(reqBytes, 0);
+  Atomics.store(bridge.signal, 1, reqLen);
+
+  // Signal: request ready
+  Atomics.store(bridge.signal, 0, 1);
+  Atomics.notify(bridge.signal, 0);
+
+  // Block until response ready (state changes from 1 to 2)
+  Atomics.wait(bridge.signal, 0, 1);
+
+  const state = Atomics.load(bridge.signal, 0);
+  if (state !== 2) return -3;
+
+  // Read response from shared buffer
+  const respLength = Atomics.load(bridge.signal, 1);
+  if (respLength > respLen) return -4; // response too large for WASM buffer
+
+  // Write response to WASM memory (re-read buffer in case of memory.grow)
+  const wasmBufFresh = new Uint8Array(bridge.wasmMemory.buffer);
+  wasmBufFresh.set(bridge.data.subarray(0, respLength), respPtr);
+
+  // Reset signal to idle
+  Atomics.store(bridge.signal, 0, 0);
+
+  return respLength;
+}
+
+// -------------------------------------------------------------------------
 // Loader functions
 // -------------------------------------------------------------------------
 
@@ -78,28 +183,42 @@ export function loadWalletModule(walletPkgPath?: string): WalletExports {
 }
 
 /**
- * Load the mandate WASM module.
+ * Load the mandate WASM module with a live HTTP bridge.
  *
- * The mandate WASM binary imports `env.get_time` and `env.http_execute`.
- * The wasm-pack generated JS does `require("env")` to resolve these.
- * We need to make that resolve — the simplest approach is to create a
- * shim module and hook Node's resolution temporarily.
+ * Sets up a Worker thread for async HTTP, hooks WebAssembly.Instance to
+ * capture WASM memory, and provides an env shim where http_execute
+ * synchronously bridges to the Worker via SharedArrayBuffer + Atomics.
  */
-export function loadMandateModule(mandatePkgPath?: string): MandateExports {
+export function loadMandateModule(
+  mandatePkgPath?: string,
+  httpTimeout?: number,
+): { mandate: MandateExports; bridge: HttpBridge } {
   const pkgDir = mandatePkgPath ?? resolveDefaultPkgPath('arysen-mandate');
 
-  // Write a temporary "env.js" shim next to the mandate JS file so that
-  // `require("env")` resolves via the NODE_PATH or we can redirect to it.
-  // But actually, the most reliable approach: patch Module._resolveFilename.
+  // 1. Create the HTTP bridge (Worker + SharedArrayBuffers)
+  const bridge = createHttpBridge(httpTimeout);
+
+  // 2. Hook WebAssembly.Instance to capture WASM memory
+  const OrigInstance = WebAssembly.Instance;
+  (WebAssembly as unknown as Record<string, unknown>).Instance = function (
+    module: WebAssembly.Module,
+    imports: WebAssembly.Imports,
+  ): WebAssembly.Instance {
+    const instance = new OrigInstance(module, imports);
+    if (instance.exports.memory) {
+      bridge.wasmMemory = instance.exports.memory as WebAssembly.Memory;
+    }
+    return instance;
+  };
+
+  // 3. Write env shim that uses the global bridge
+  globalThis.__arysenHttpBridge = bridge;
+  const envShimPath = resolve(pkgDir, '_env_shim.js');
+  writeFileSync(envShimPath, ENV_SHIM_SOURCE);
+
+  // 4. Patch module resolution so require("env") resolves to our shim
   const ModuleInternal = Module as unknown as ModuleInternals;
   const origResolve = ModuleInternal._resolveFilename;
-
-  // Create a shim file in the package directory
-  const envShimPath = resolve(pkgDir, '_env_shim.js');
-  if (!existsSync(envShimPath)) {
-    writeFileSync(envShimPath, ENV_SHIM_SOURCE);
-  }
-
   ModuleInternal._resolveFilename = function (
     request: string,
     parent: unknown,
@@ -112,29 +231,69 @@ export function loadMandateModule(mandatePkgPath?: string): MandateExports {
     return origResolve.call(this, request, parent, isMain, options);
   };
 
+  // 5. Clear require cache for env shim (force reload with new source)
+  const requireFn = createRequire(resolve(pkgDir, 'package.json'));
+  delete requireFn.cache?.[envShimPath];
+
   try {
-    const requireFn = createRequire(resolve(pkgDir, 'package.json'));
-    const mod = requireFn('./arysen_mandate.js') as MandateExports;
-    return mod;
+    const mandate = requireFn('./arysen_mandate.js') as MandateExports;
+    return { mandate, bridge };
   } finally {
-    // Restore original resolution
     ModuleInternal._resolveFilename = origResolve;
   }
 }
 
-/** Source code for the env shim module. */
+/** Terminate the HTTP bridge worker. */
+export function destroyBridge(bridge: HttpBridge): void {
+  // Signal shutdown
+  Atomics.store(bridge.signal, 0, -1);
+  Atomics.notify(bridge.signal, 0);
+  bridge.worker.terminate();
+}
+
+/** Source code for the env shim module — uses globalThis.__arysenHttpBridge. */
 const ENV_SHIM_SOURCE = `
 // Auto-generated shim for mandate WASM "env" imports.
-// These are C-ABI-level stubs; the WASM binary expects low-level functions
-// but uses wasm-bindgen's JS glue as the actual import object.
-// The generated JS uses these as the import object for the "env" section
-// when instantiating the WASM module.
+// http_execute bridges synchronously to the HTTP Worker thread
+// via SharedArrayBuffer + Atomics (set up by loader.ts).
 module.exports = {
   key_store_read: function() { return -1; },
   key_store_write: function() { return 0; },
   get_random_bytes: function() { return 0; },
   get_time: function() { return BigInt(Math.floor(Date.now() / 1000)); },
-  http_execute: function() { return 0; },
+  http_execute: function(reqPtr, reqLen, respPtr, respLen) {
+    var bridge = globalThis.__arysenHttpBridge;
+    if (!bridge || !bridge.wasmMemory) return -1;
+
+    // Read request from WASM memory
+    var wasmBuf = new Uint8Array(bridge.wasmMemory.buffer);
+    var reqBytes = wasmBuf.slice(reqPtr, reqPtr + reqLen);
+
+    // Copy to shared data buffer
+    if (reqBytes.length > bridge.data.length) return -2;
+    bridge.data.set(reqBytes, 0);
+    Atomics.store(bridge.signal, 1, reqLen);
+
+    // Signal request ready and block until response
+    Atomics.store(bridge.signal, 0, 1);
+    Atomics.notify(bridge.signal, 0);
+    Atomics.wait(bridge.signal, 0, 1);
+
+    var state = Atomics.load(bridge.signal, 0);
+    if (state !== 2) return -3;
+
+    // Read response length
+    var respLength = Atomics.load(bridge.signal, 1);
+    if (respLength > respLen) return -4;
+
+    // Write response to WASM memory (re-read buffer for potential memory.grow)
+    var freshBuf = new Uint8Array(bridge.wasmMemory.buffer);
+    freshBuf.set(bridge.data.subarray(0, respLength), respPtr);
+
+    // Reset to idle
+    Atomics.store(bridge.signal, 0, 0);
+    return respLength;
+  },
 };
 `;
 

@@ -6,8 +6,10 @@
  * import { ArysenKeymod } from 'agent-sdk/keymod';
  *
  * const keymod = await ArysenKeymod.init();
- * const workerKey = keymod.generateWorkerKey();
- * const sig = keymod.signWorker(message, workerKey.key_id);
+ * const keys = keymod.generateKeys();
+ * keymod.initMandate({ base_url, agent_id, worker_key_id: keys.worker_key_id, session_key_id: keys.session_key_id });
+ * keymod.transferUsdc('0xRecipient', '5.00');
+ * keymod.destroy(); // clean up worker thread
  * ```
  */
 
@@ -48,7 +50,7 @@ import type {
   KeymodOptions,
 } from './types.js';
 
-import { loadWalletModule, loadMandateModule } from './loader.js';
+import { loadWalletModule, loadMandateModule, destroyBridge } from './loader.js';
 import type { WalletExports, MandateExports } from './loader.js';
 
 // -------------------------------------------------------------------------
@@ -70,25 +72,50 @@ function mapToObject(value: unknown): unknown {
   return value;
 }
 
+// Internal bridge type (avoid exposing loader internals)
+interface Bridge {
+  worker: import('node:worker_threads').Worker;
+  signal: Int32Array;
+  data: Uint8Array;
+  wasmMemory: WebAssembly.Memory | null;
+}
+
 export class ArysenKeymod {
   private readonly wallet: WalletExports;
   private readonly mandate: MandateExports;
+  private bridge: Bridge | null;
 
-  private constructor(wallet: WalletExports, mandate: MandateExports) {
+  private constructor(wallet: WalletExports, mandate: MandateExports, bridge: Bridge) {
     this.wallet = wallet;
     this.mandate = mandate;
+    this.bridge = bridge;
   }
 
   /**
    * Initialize both WASM modules and return a ready-to-use instance.
+   *
+   * Spawns a Worker thread for HTTP bridging — call `destroy()` when done
+   * to clean up. The worker is unref'd so it won't keep the process alive
+   * if you forget.
    */
   static async init(options?: KeymodOptions): Promise<ArysenKeymod> {
-    // Both modules load synchronously (wasm-pack nodejs target reads the
-    // .wasm file from disk synchronously), but we keep the API async for
-    // future compatibility if we switch to async instantiation.
     const wallet = loadWalletModule(options?.walletWasmPath);
-    const mandate = loadMandateModule(options?.mandateWasmPath);
-    return new ArysenKeymod(wallet, mandate);
+    const { mandate, bridge } = loadMandateModule(
+      options?.mandateWasmPath,
+      options?.httpTimeout,
+    );
+    return new ArysenKeymod(wallet, mandate, bridge);
+  }
+
+  /**
+   * Terminate the HTTP Worker thread. Call when the keymod instance
+   * is no longer needed. Safe to call multiple times.
+   */
+  destroy(): void {
+    if (this.bridge) {
+      destroyBridge(this.bridge);
+      this.bridge = null;
+    }
   }
 
   // ------------------------------------------------------------------
@@ -161,7 +188,6 @@ export class ArysenKeymod {
   /** List all stored secret names (values are never exposed). */
   listSecrets(): string[] {
     const raw = this.mandate.list_secret_names();
-    // serde-wasm-bindgen returns a plain Array for Vec<String>
     return raw as string[];
   }
 
