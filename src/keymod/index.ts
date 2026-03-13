@@ -83,12 +83,22 @@ interface Bridge {
 export class ArysenKeymod {
   private readonly wallet: WalletExports;
   private readonly mandate: MandateExports;
+  private readonly walletHash: string;
+  private readonly mandateHash: string;
   private bridge: Bridge | null;
 
-  private constructor(wallet: WalletExports, mandate: MandateExports, bridge: Bridge) {
+  private constructor(
+    wallet: WalletExports,
+    mandate: MandateExports,
+    bridge: Bridge,
+    walletHash: string,
+    mandateHash: string,
+  ) {
     this.wallet = wallet;
     this.mandate = mandate;
     this.bridge = bridge;
+    this.walletHash = walletHash;
+    this.mandateHash = mandateHash;
   }
 
   /**
@@ -99,12 +109,12 @@ export class ArysenKeymod {
    * if you forget.
    */
   static async init(options?: KeymodOptions): Promise<ArysenKeymod> {
-    const wallet = loadWalletModule(options?.walletWasmPath);
-    const { mandate, bridge } = loadMandateModule(
+    const { wallet, hash: wHash } = loadWalletModule(options?.walletWasmPath);
+    const { mandate, bridge, hash: mHash } = loadMandateModule(
       options?.mandateWasmPath,
       options?.httpTimeout,
     );
-    return new ArysenKeymod(wallet, mandate, bridge);
+    return new ArysenKeymod(wallet, mandate, bridge, wHash, mHash);
   }
 
   /**
@@ -162,9 +172,9 @@ export class ArysenKeymod {
     return this.wallet.verify_session(message, signature, pubKey);
   }
 
-  /** Get the SHA-256 hash of the wallet WASM module binary. */
-  getWalletModuleHash(): Uint8Array {
-    return this.wallet.get_module_hash();
+  /** Get the SHA-256 hash of the wallet WASM binary (hex string). */
+  getWalletHash(): string {
+    return this.walletHash;
   }
 
   // ------------------------------------------------------------------
@@ -228,9 +238,9 @@ export class ArysenKeymod {
     return mapToObject(this.mandate.get_spending_summary()) as SpendingSummary;
   }
 
-  /** Get the SHA-256 hash of the mandate WASM module binary. */
-  getMandateModuleHash(): Uint8Array {
-    return this.mandate.get_mandate_hash();
+  /** Get the SHA-256 hash of the mandate WASM binary (hex string). */
+  getMandateHash(): string {
+    return this.mandateHash;
   }
 
   // ------------------------------------------------------------------

@@ -18,8 +18,8 @@ import type {
 // ---------------------------------------------------------------------------
 
 describe('loader', () => {
-  it('loads the wallet WASM module', () => {
-    const wallet = loadWalletModule();
+  it('loads the wallet WASM module with hash', () => {
+    const { wallet, hash } = loadWalletModule();
     expect(wallet).toBeDefined();
     expect(typeof wallet.generate_worker_keypair).toBe('function');
     expect(typeof wallet.generate_session_keypair).toBe('function');
@@ -27,11 +27,12 @@ describe('loader', () => {
     expect(typeof wallet.sign_session).toBe('function');
     expect(typeof wallet.verify_worker).toBe('function');
     expect(typeof wallet.verify_session).toBe('function');
-    expect(typeof wallet.get_module_hash).toBe('function');
+    // Hash is a 64-char hex string (SHA-256)
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('loads the mandate WASM module', () => {
-    const { mandate } = loadMandateModule();
+  it('loads the mandate WASM module with hash', () => {
+    const { mandate, hash } = loadMandateModule();
     expect(mandate).toBeDefined();
     expect(typeof mandate.deposit_secret).toBe('function');
     expect(typeof mandate.remove_secret).toBe('function');
@@ -40,9 +41,26 @@ describe('loader', () => {
     expect(typeof mandate.set_policy).toBe('function');
     expect(typeof mandate.check_policy).toBe('function');
     expect(typeof mandate.get_spending_summary).toBe('function');
-    expect(typeof mandate.get_mandate_hash).toBe('function');
     expect(typeof mandate.mandate_init).toBe('function');
     expect(typeof mandate.get_mandate_info).toBe('function');
+    // Hash is a 64-char hex string (SHA-256)
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('wallet and mandate hashes are stable across loads', () => {
+    const { hash: h1 } = loadWalletModule();
+    const { hash: h2 } = loadWalletModule();
+    expect(h1).toBe(h2);
+
+    const { hash: m1 } = loadMandateModule();
+    const { hash: m2 } = loadMandateModule();
+    expect(m1).toBe(m2);
+  });
+
+  it('wallet and mandate hashes are different', () => {
+    const { hash: walletHash } = loadWalletModule();
+    const { hash: mandateHash } = loadMandateModule();
+    expect(walletHash).not.toBe(mandateHash);
   });
 });
 
@@ -184,16 +202,20 @@ describe('ArysenKeymod', () => {
   // -- Module hash --
 
   describe('module hash', () => {
-    it('wallet module hash is 32 bytes', () => {
-      const hash = keymod.getWalletModuleHash();
-      expect(hash).toBeInstanceOf(Uint8Array);
-      expect(hash.length).toBe(32);
+    it('getWalletHash returns a 64-char hex string', () => {
+      const hash = keymod.getWalletHash();
+      expect(typeof hash).toBe('string');
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    it('mandate module hash is 32 bytes', () => {
-      const hash = keymod.getMandateModuleHash();
-      expect(hash).toBeInstanceOf(Uint8Array);
-      expect(hash.length).toBe(32);
+    it('getMandateHash returns a 64-char hex string', () => {
+      const hash = keymod.getMandateHash();
+      expect(typeof hash).toBe('string');
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('hashes are different for wallet and mandate', () => {
+      expect(keymod.getWalletHash()).not.toBe(keymod.getMandateHash());
     });
   });
 

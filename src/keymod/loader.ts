@@ -9,6 +9,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +25,6 @@ export interface WalletExports {
   generate_session_keypair_with_secret(): unknown;
   generate_worker_keypair(): unknown;
   generate_worker_keypair_with_secret(): unknown;
-  get_module_hash(): Uint8Array;
   sign_session(message: Uint8Array, key_id: string): Uint8Array;
   sign_worker(message: Uint8Array, key_id: string): Uint8Array;
   verify_session(message: Uint8Array, signature: Uint8Array, pub_key: Uint8Array): boolean;
@@ -40,7 +40,6 @@ export interface MandateExports {
   create_deal_order(params_json: string): unknown;
   deposit_secret(name: string, encrypted_value: Uint8Array): boolean;
   execute_request(template_json: string): unknown;
-  get_mandate_hash(): Uint8Array;
   get_mandate_info(): unknown;
   get_spending_summary(): unknown;
   list_secret_names(): unknown;
@@ -175,11 +174,12 @@ function httpExecuteSync(
  * The wallet package has no custom host imports — it only needs the standard
  * wasm-bindgen glue which is self-contained in the generated JS.
  */
-export function loadWalletModule(walletPkgPath?: string): WalletExports {
+export function loadWalletModule(walletPkgPath?: string): { wallet: WalletExports; hash: string } {
   const pkgDir = walletPkgPath ?? resolveDefaultPkgPath('arysen-wallet');
   const requireFn = createRequire(resolve(pkgDir, 'package.json'));
   const mod = requireFn('./arysen_wallet.js') as WalletExports;
-  return mod;
+  const hash = computeWasmHash(resolve(pkgDir, 'arysen_wallet_bg.wasm'));
+  return { wallet: mod, hash };
 }
 
 /**
@@ -192,7 +192,7 @@ export function loadWalletModule(walletPkgPath?: string): WalletExports {
 export function loadMandateModule(
   mandatePkgPath?: string,
   httpTimeout?: number,
-): { mandate: MandateExports; bridge: HttpBridge } {
+): { mandate: MandateExports; bridge: HttpBridge; hash: string } {
   const pkgDir = mandatePkgPath ?? resolveDefaultPkgPath('arysen-mandate');
 
   // 1. Create the HTTP bridge (Worker + SharedArrayBuffers)
@@ -237,7 +237,8 @@ export function loadMandateModule(
 
   try {
     const mandate = requireFn('./arysen_mandate.js') as MandateExports;
-    return { mandate, bridge };
+    const hash = computeWasmHash(resolve(pkgDir, 'arysen_mandate_bg.wasm'));
+    return { mandate, bridge, hash };
   } finally {
     ModuleInternal._resolveFilename = origResolve;
   }
@@ -300,6 +301,12 @@ module.exports = {
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
+
+/** Compute SHA-256 hash of a WASM binary file, returned as a hex string. */
+function computeWasmHash(filePath: string): string {
+  const bytes = readFileSync(filePath);
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 /** Resolve the default pkg directory for a linked package. */
 function resolveDefaultPkgPath(packageName: string): string {

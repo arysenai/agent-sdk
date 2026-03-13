@@ -42,7 +42,7 @@ After rebuilding WASM in keymod (`wasm-pack build --target nodejs`), run `pnpm i
 
 - **loader.ts** patches `Module._resolveFilename` to intercept `require("env")` from the mandate WASM glue, providing an env shim with host imports (`get_time`, `key_store_read/write`, `http_execute`). Also hooks `WebAssembly.Instance` to capture WASM linear memory for the HTTP bridge.
 - **http-worker.ts** runs in a Worker thread for sync↔async HTTP bridging. The env shim's `http_execute` uses SharedArrayBuffer + Atomics to block the main thread while the Worker does async `fetch()`. This allows WASM's synchronous host import calls to make real HTTP requests.
-- **loader.ts** `loadMandateModule()` returns `{ mandate, bridge }` — the bridge must be passed to `ArysenKeymod` and cleaned up via `destroy()`.
+- **loader.ts** `loadWalletModule()` returns `{ wallet, hash }` and `loadMandateModule()` returns `{ mandate, bridge, hash }` — hash is SHA-256 hex of the `.wasm` binary, computed at load time. The bridge must be passed to `ArysenKeymod` and cleaned up via `destroy()`.
 - **mapToObject()** in index.ts recursively converts `Map` objects (from serde-wasm-bindgen) to plain JS objects.
 - Methods are synchronous (WASM calls are blocking). `ArysenKeymod.init()` spawns the Worker thread — call `destroy()` when done.
 - Error responses from WASM come as `{ error: string }` — callers should check for this.
@@ -55,8 +55,8 @@ After rebuilding WASM in keymod (`wasm-pack build --target nodejs`), run `pnpm i
 
 ## Testing
 
-32 tests in `tests/keymod.test.ts`:
-- Loader: verifies all WASM function exports exist (`loadMandateModule()` returns `{ mandate, bridge }`)
+35 tests in `tests/keymod.test.ts`:
+- Loader: verifies WASM exports + load-time hash (SHA-256 hex), stability, and distinctness
 - Key generation: Ed25519 (64-char hex pubkey) and secp256k1 (66-char hex compressed pubkey)
 - Sign/verify roundtrips for both schemes
 - Secrets lifecycle (deposit, list, remove)
