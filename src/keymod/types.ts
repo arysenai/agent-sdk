@@ -136,3 +136,25 @@ export interface KeymodOptions {
   /** Override path to the mandate WASM pkg directory. */
   mandateWasmPath?: string;
 }
+
+/** Parameters for agent registration with the Arysen backend. */
+export interface RegisterAgentParams {
+  /** Base URL of the Arysen backend (e.g. "http://localhost:4000/api/v1"). */
+  base_url: string;
+  /** Hex-encoded Ed25519 worker public key. */
+  worker_pub_key: string;
+  /** Hex-encoded secp256k1 session public key. */
+  session_pub_key: string;
+  /** Agent display name. */
+  name: string;
+  /** Optional agent description. */
+  description?: string;
+}
+
+/** Result of agent registration. */
+export interface RegisterAgentResult {
+  id: string;
+  name: string;
+  status: string;
+  wasm_hash_verified: boolean;
+}

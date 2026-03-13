@@ -32,6 +32,8 @@ export type {
   TransferResult,
   DealOrderParams,
   KeymodOptions,
+  RegisterAgentParams,
+  RegisterAgentResult,
 } from './types.js';
 
 import type {
@@ -48,6 +50,8 @@ import type {
   TransferResult,
   DealOrderParams,
   KeymodOptions,
+  RegisterAgentParams,
+  RegisterAgentResult,
 } from './types.js';
 
 import { loadWalletModule, loadMandateModule, destroyBridge } from './loader.js';
@@ -126,6 +130,41 @@ export class ArysenKeymod {
       destroyBridge(this.bridge);
       this.bridge = null;
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Agent registration
+  // ------------------------------------------------------------------
+
+  /**
+   * Register the agent with the Arysen backend.
+   *
+   * Sends the worker/session public keys along with load-time WASM hashes
+   * so the backend can verify the agent runs audited binaries.
+   */
+  async registerAgent(params: RegisterAgentParams): Promise<RegisterAgentResult> {
+    const url = `${params.base_url.replace(/\/+$/, '')}/agents/register`;
+    const body = JSON.stringify({
+      worker_pub_key: params.worker_pub_key,
+      session_pub_key: params.session_pub_key,
+      name: params.name,
+      description: params.description,
+      wasm_wallet_hash: this.walletHash,
+      wasm_mandate_hash: this.mandateHash,
+    });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+    const json = await response.json() as { success: boolean; data?: RegisterAgentResult; message?: string };
+    if (!response.ok || !json.success) {
+      throw new Error(json.message ?? `Registration failed (${response.status})`);
+    }
+
+    return json.data!;
   }
 
   // ------------------------------------------------------------------

@@ -298,6 +298,92 @@ describe('ArysenKeymod', () => {
     });
   });
 
+  // -- Agent registration --
+
+  describe('registerAgent', () => {
+    it('sends hashes in registration request body', async () => {
+      // Intercept fetch to verify the request body includes hashes
+      const originalFetch = globalThis.fetch;
+      let capturedBody: Record<string, unknown> | null = null;
+
+      globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return new Response(
+          JSON.stringify({ success: true, data: { id: 'test-id', name: 'test', status: 'active', wasm_hash_verified: true } }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      };
+
+      try {
+        const result = await keymod.registerAgent({
+          base_url: 'http://localhost:4000/api/v1',
+          worker_pub_key: 'deadbeef'.repeat(8),
+          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          name: 'test-agent',
+          description: 'test description',
+        });
+
+        expect(capturedBody).not.toBeNull();
+        expect(capturedBody!.wasm_wallet_hash).toBe(keymod.getWalletHash());
+        expect(capturedBody!.wasm_mandate_hash).toBe(keymod.getMandateHash());
+        expect(capturedBody!.worker_pub_key).toBe('deadbeef'.repeat(8));
+        expect(capturedBody!.session_pub_key).toBe('cafebabe'.repeat(8) + '0011');
+        expect(capturedBody!.name).toBe('test-agent');
+        expect(capturedBody!.description).toBe('test description');
+        expect(result.id).toBe('test-id');
+        expect(result.wasm_hash_verified).toBe(true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('throws on registration failure', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => {
+        return new Response(
+          JSON.stringify({ success: false, message: 'Agent name already taken' }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        );
+      };
+
+      try {
+        await expect(keymod.registerAgent({
+          base_url: 'http://localhost:4000/api/v1',
+          worker_pub_key: 'deadbeef'.repeat(8),
+          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          name: 'taken-name',
+        })).rejects.toThrow('Agent name already taken');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('strips trailing slashes from base_url', async () => {
+      const originalFetch = globalThis.fetch;
+      let capturedUrl = '';
+
+      globalThis.fetch = async (input: string | URL | Request) => {
+        capturedUrl = typeof input === 'string' ? input : input.toString();
+        return new Response(
+          JSON.stringify({ success: true, data: { id: 'x', name: 'x', status: 'active', wasm_hash_verified: false } }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      };
+
+      try {
+        await keymod.registerAgent({
+          base_url: 'http://localhost:4000/api/v1///',
+          worker_pub_key: 'deadbeef'.repeat(8),
+          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          name: 'test',
+        });
+        expect(capturedUrl).toBe('http://localhost:4000/api/v1/agents/register');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
   // -- Backend operations (require init) --
 
   describe('backend operations', () => {
