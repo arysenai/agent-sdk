@@ -8,12 +8,12 @@ importers:
 
   .:
     dependencies:
-      arysen-mandate:
-        specifier: file:../keymod/mandate/pkg
-        version: file:../keymod/mandate/pkg
-      arysen-wallet:
-        specifier: file:../keymod/wallet/pkg
-        version: file:../keymod/wallet/pkg
+      '@arysenai/arysen-mandate':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@arysenai/arysen-wallet':
+        specifier: ^0.1.0
+        version: 0.1.0
     devDependencies:
       '@types/node':
         specifier: ^25.3.3
@@ -26,6 +26,12 @@ importers:
         version: 3.2.4(@types/node@25.3.3)
 
 packages:
+
+  '@arysenai/arysen-mandate@0.1.0':
+    resolution: {integrity: sha512-lrWwQ0kK7fSQZ/0yh+mic7Lo31i2RL+SJICCTsyq7qf/jbtwVqsSfFeNh+cSccps+4DoPxJuvfloObSm8AnK1w==}
+
+  '@arysenai/arysen-wallet@0.1.0':
+    resolution: {integrity: sha512-S+2ghdOJj61QYWXrxrse4aDUBm52ymwSOb5/QVRdZBJkBvL8O3Qy3r/x4lAXAIRkr6DAQmaE5xL2FyvMoUbGVA==}
 
   '@esbuild/aix-ppc64@0.27.3':
     resolution: {integrity: sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg==}
@@ -352,12 +358,6 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
-  arysen-mandate@file:../keymod/mandate/pkg:
-    resolution: {directory: ../keymod/mandate/pkg, type: directory}
-
-  arysen-wallet@file:../keymod/wallet/pkg:
-    resolution: {directory: ../keymod/wallet/pkg, type: directory}
-
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -582,6 +582,10 @@ packages:
 
 snapshots:
 
+  '@arysenai/arysen-mandate@0.1.0': {}
+
+  '@arysenai/arysen-wallet@0.1.0': {}
+
   '@esbuild/aix-ppc64@0.27.3':
     optional: true
 
@@ -791,10 +795,6 @@ snapshots:
       '@vitest/pretty-format': 3.2.4
       loupe: 3.2.1
       tinyrainbow: 2.0.0
-
-  arysen-mandate@file:../keymod/mandate/pkg: {}
-
-  arysen-wallet@file:../keymod/wallet/pkg: {}
 
   assertion-error@2.0.1: {}
 

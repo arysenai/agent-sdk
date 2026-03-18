@@ -175,7 +175,7 @@ function httpExecuteSync(
  * wasm-bindgen glue which is self-contained in the generated JS.
  */
 export function loadWalletModule(walletPkgPath?: string): { wallet: WalletExports; hash: string } {
-  const pkgDir = walletPkgPath ?? resolveDefaultPkgPath('arysen-wallet');
+  const pkgDir = walletPkgPath ?? resolveDefaultPkgPath('@arysenai/arysen-wallet');
   const requireFn = createRequire(resolve(pkgDir, 'package.json'));
   const mod = requireFn('./arysen_wallet.js') as WalletExports;
   const hash = computeWasmHash(resolve(pkgDir, 'arysen_wallet_bg.wasm'));
@@ -193,7 +193,7 @@ export function loadMandateModule(
   mandatePkgPath?: string,
   httpTimeout?: number,
 ): { mandate: MandateExports; bridge: HttpBridge; hash: string } {
-  const pkgDir = mandatePkgPath ?? resolveDefaultPkgPath('arysen-mandate');
+  const pkgDir = mandatePkgPath ?? resolveDefaultPkgPath('@arysenai/arysen-mandate');
 
   // 1. Create the HTTP bridge (Worker + SharedArrayBuffers)
   const bridge = createHttpBridge(httpTimeout);
@@ -308,20 +308,22 @@ function computeWasmHash(filePath: string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** Resolve the default pkg directory for a linked package. */
+/** Resolve the default pkg directory for a linked package (supports scoped names). */
 function resolveDefaultPkgPath(packageName: string): string {
   const thisFile = new URL(import.meta.url).pathname;
   const sdkRoot = resolve(dirname(thisFile), '..', '..');
-  const pkgDir = resolve(sdkRoot, 'node_modules', packageName);
+  const requireFn = createRequire(resolve(sdkRoot, 'package.json'));
   try {
-    readFileSync(resolve(pkgDir, 'package.json'));
+    const pkgJsonPath = requireFn.resolve(`${packageName}/package.json`);
+    return dirname(pkgJsonPath);
   } catch {
+    const fallbackDir = resolve(sdkRoot, 'node_modules', ...packageName.split('/'));
     throw new Error(
-      `Cannot find ${packageName} package at ${pkgDir}. ` +
+      `Cannot find ${packageName} package. ` +
+      `Tried Node resolution and fallback path ${fallbackDir}. ` +
       `Make sure to run 'pnpm install' and that the WASM packages are built.`
     );
   }
-  return pkgDir;
 }
 
 // Node.js internal typing

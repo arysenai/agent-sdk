@@ -17,8 +17,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "arysen-mandate": "file:../keymod/mandate/pkg",
-    "arysen-wallet": "file:../keymod/wallet/pkg"
+    "@arysenai/arysen-mandate": "^0.1.0",
+    "@arysenai/arysen-wallet": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
