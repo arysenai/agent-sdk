@@ -128,10 +128,45 @@ function win32Write(keyId: string, data: Buffer): void {
 }
 
 // ---------------------------------------------------------------------------
-// Linux encrypted files (fallback)
+// Linux: libsecret (gnome-keyring/kwallet) with file fallback
 // ---------------------------------------------------------------------------
 
-function linuxRead(keyId: string): Buffer | null {
+let _hasSecretTool: boolean | null = null;
+
+function hasSecretTool(): boolean {
+  if (_hasSecretTool !== null) return _hasSecretTool;
+  try {
+    execFileSync('which', ['secret-tool'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    _hasSecretTool = true;
+  } catch {
+    _hasSecretTool = false;
+  }
+  return _hasSecretTool;
+}
+
+function secretToolRead(keyId: string): Buffer | null {
+  try {
+    const stdout = execFileSync('secret-tool', [
+      'lookup', 'service', KEYCHAIN_SERVICE, 'key', sanitize(keyId),
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    // secret-tool outputs raw bytes to stdout
+    return Buffer.from(stdout.toString('utf8').trim(), 'base64');
+  } catch {
+    return null;
+  }
+}
+
+function secretToolWrite(keyId: string, data: Buffer): void {
+  const safe = sanitize(keyId);
+  const b64 = data.toString('base64');
+  // secret-tool reads the secret value from stdin
+  execFileSync('secret-tool', [
+    'store', '--label', `Arysen ${safe}`,
+    'service', KEYCHAIN_SERVICE, 'key', safe,
+  ], { input: b64, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+function fileRead(keyId: string): Buffer | null {
   const filePath = join(LINUX_KEYS_DIR, `${sanitize(keyId)}.enc`);
   try {
     return readFileSync(filePath);
@@ -140,10 +175,23 @@ function linuxRead(keyId: string): Buffer | null {
   }
 }
 
-function linuxWrite(keyId: string, data: Buffer): void {
+function fileWrite(keyId: string, data: Buffer): void {
   if (!existsSync(LINUX_KEYS_DIR)) mkdirSync(LINUX_KEYS_DIR, { recursive: true, mode: 0o700 });
   const filePath = join(LINUX_KEYS_DIR, `${sanitize(keyId)}.enc`);
   writeFileSync(filePath, data, { mode: 0o600 });
+}
+
+function linuxRead(keyId: string): Buffer | null {
+  if (hasSecretTool()) return secretToolRead(keyId);
+  return fileRead(keyId);
+}
+
+function linuxWrite(keyId: string, data: Buffer): void {
+  if (hasSecretTool()) {
+    secretToolWrite(keyId, data);
+    return;
+  }
+  fileWrite(keyId, data);
 }
 
 // ---------------------------------------------------------------------------
