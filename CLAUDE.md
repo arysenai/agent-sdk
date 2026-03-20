@@ -17,6 +17,7 @@ agent-sdk/
 │       ├── loader.ts       # WASM module loader + HTTP bridge setup
 │       ├── http-worker.ts  # Worker thread — async fetch loop
 │       ├── http-host.ts    # HttpHost — standalone fetch-based HTTP executor
+│       ├── keystore.ts     # Platform keystore — macOS Keychain, Windows DPAPI, Linux libsecret/files
 │       └── storage-fs.ts   # FileSystemStorage — encrypted key files
 └── tests/
     └── keymod.test.ts  # vitest integration tests

@@ -58,7 +58,6 @@ export interface MandateExports {
 export interface HostImports {
   key_store_read: (keyId: string, buf: Uint8Array) => number;
   key_store_write: (keyId: string, data: Uint8Array) => number;
-  get_random_bytes: (buf: Uint8Array) => number;
   get_time: () => bigint;
   http_execute: (reqPtr: number, reqLen: number, respPtr: number, respLen: number) => number;
 }
@@ -121,53 +120,6 @@ function createHttpBridge(httpTimeout?: number): HttpBridge {
     data: new Uint8Array(dataBuf),
     wasmMemory: null,
   };
-}
-
-/**
- * Synchronous HTTP execute — called from the env shim during WASM execution.
- *
- * Reads request JSON from WASM memory, sends to Worker thread via
- * SharedArrayBuffer, blocks with Atomics.wait until response arrives,
- * writes response back to WASM memory.
- */
-function httpExecuteSync(
-  bridge: HttpBridge,
-  reqPtr: number, reqLen: number,
-  respPtr: number, respLen: number,
-): number {
-  if (!bridge.wasmMemory) return -1;
-
-  // Read request JSON from WASM linear memory
-  const wasmBuf = new Uint8Array(bridge.wasmMemory.buffer);
-  const reqBytes = wasmBuf.slice(reqPtr, reqPtr + reqLen);
-
-  // Copy request to shared data buffer
-  if (reqBytes.length > bridge.data.length) return -2;
-  bridge.data.set(reqBytes, 0);
-  Atomics.store(bridge.signal, 1, reqLen);
-
-  // Signal: request ready
-  Atomics.store(bridge.signal, 0, 1);
-  Atomics.notify(bridge.signal, 0);
-
-  // Block until response ready (state changes from 1 to 2)
-  Atomics.wait(bridge.signal, 0, 1);
-
-  const state = Atomics.load(bridge.signal, 0);
-  if (state !== 2) return -3;
-
-  // Read response from shared buffer
-  const respLength = Atomics.load(bridge.signal, 1);
-  if (respLength > respLen) return -4; // response too large for WASM buffer
-
-  // Write response to WASM memory (re-read buffer in case of memory.grow)
-  const wasmBufFresh = new Uint8Array(bridge.wasmMemory.buffer);
-  wasmBufFresh.set(bridge.data.subarray(0, respLength), respPtr);
-
-  // Reset signal to idle
-  Atomics.store(bridge.signal, 0, 0);
-
-  return respLength;
 }
 
 // -------------------------------------------------------------------------
@@ -277,7 +229,9 @@ module.exports = {
     var keyId = new TextDecoder().decode(keyIdBytes);
 
     // Read from platform keystore
-    var data = ks.read(keyId);
+    try {
+      var data = ks.read(keyId);
+    } catch (e) { return -1; }
     if (!data) return -1;
     if (data.length > bufLen) return -2;
 
@@ -300,8 +254,10 @@ module.exports = {
     var data = Buffer.from(wasmBuf.slice(dataPtr, dataPtr + dataLen));
 
     // Write to platform keystore
-    ks.write(keyId, data);
-    return 0;
+    try {
+      ks.write(keyId, data);
+      return 0;
+    } catch (e) { return -1; }
   },
   get_time: function() { return BigInt(Math.floor(Date.now() / 1000)); },
   http_execute: function(reqPtr, reqLen, respPtr, respLen) {
