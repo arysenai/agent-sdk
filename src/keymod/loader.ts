@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import Module from 'node:module';
+import { platformRead, platformWrite } from './keystore.js';
 
 // -------------------------------------------------------------------------
 // Wallet module types (mirrors arysen_wallet.d.ts)
@@ -77,10 +78,15 @@ interface HttpBridge {
   wasmMemory: WebAssembly.Memory | null;
 }
 
-/** Global bridge — set before mandate module loads, used by env shim. */
+/** Global bridge + keystore — set before mandate module loads, used by env shim. */
 declare global {
   // eslint-disable-next-line no-var
   var __arysenHttpBridge: HttpBridge | undefined;
+  // eslint-disable-next-line no-var
+  var __arysenKeystore: {
+    read: (keyId: string) => Buffer | null;
+    write: (keyId: string, data: Buffer) => void;
+  } | undefined;
 }
 
 function createHttpBridge(httpTimeout?: number): HttpBridge {
@@ -211,8 +217,9 @@ export function loadMandateModule(
     return instance;
   };
 
-  // 3. Write env shim that uses the global bridge
+  // 3. Write env shim that uses the global bridge + keystore
   globalThis.__arysenHttpBridge = bridge;
+  globalThis.__arysenKeystore = { read: platformRead, write: platformWrite };
   const envShimPath = resolve(pkgDir, '_env_shim.js');
   writeFileSync(envShimPath, ENV_SHIM_SOURCE);
 
@@ -252,15 +259,50 @@ export function destroyBridge(bridge: HttpBridge): void {
   bridge.worker.terminate();
 }
 
-/** Source code for the env shim module — uses globalThis.__arysenHttpBridge. */
+/** Source code for the env shim module — uses globalThis.__arysenHttpBridge + __arysenKeystore. */
 const ENV_SHIM_SOURCE = `
 // Auto-generated shim for mandate WASM "env" imports.
+// key_store_read/write route to platform keychain (macOS/Windows) or encrypted files (Linux).
 // http_execute bridges synchronously to the HTTP Worker thread
 // via SharedArrayBuffer + Atomics (set up by loader.ts).
 module.exports = {
-  key_store_read: function() { return -1; },
-  key_store_write: function() { return 0; },
-  get_random_bytes: function() { return 0; },
+  key_store_read: function(keyIdPtr, keyIdLen, bufPtr, bufLen) {
+    var bridge = globalThis.__arysenHttpBridge;
+    var ks = globalThis.__arysenKeystore;
+    if (!bridge || !bridge.wasmMemory || !ks) return -1;
+
+    // Read key_id string from WASM memory
+    var wasmBuf = new Uint8Array(bridge.wasmMemory.buffer);
+    var keyIdBytes = wasmBuf.slice(keyIdPtr, keyIdPtr + keyIdLen);
+    var keyId = new TextDecoder().decode(keyIdBytes);
+
+    // Read from platform keystore
+    var data = ks.read(keyId);
+    if (!data) return -1;
+    if (data.length > bufLen) return -2;
+
+    // Write data to WASM buffer (re-read for potential memory.grow)
+    var freshBuf = new Uint8Array(bridge.wasmMemory.buffer);
+    freshBuf.set(data, bufPtr);
+    return data.length;
+  },
+  key_store_write: function(keyIdPtr, keyIdLen, dataPtr, dataLen) {
+    var bridge = globalThis.__arysenHttpBridge;
+    var ks = globalThis.__arysenKeystore;
+    if (!bridge || !bridge.wasmMemory || !ks) return -1;
+
+    // Read key_id string from WASM memory
+    var wasmBuf = new Uint8Array(bridge.wasmMemory.buffer);
+    var keyIdBytes = wasmBuf.slice(keyIdPtr, keyIdPtr + keyIdLen);
+    var keyId = new TextDecoder().decode(keyIdBytes);
+
+    // Read data bytes from WASM memory
+    var data = Buffer.from(wasmBuf.slice(dataPtr, dataPtr + dataLen));
+
+    // Write to platform keystore
+    ks.write(keyId, data);
+    return 0;
+  },
   get_time: function() { return BigInt(Math.floor(Date.now() / 1000)); },
   http_execute: function(reqPtr, reqLen, respPtr, respLen) {
     var bridge = globalThis.__arysenHttpBridge;
