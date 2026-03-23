@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@arysenai/arysen-mandate':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@arysenai/arysen-wallet':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
     devDependencies:
       '@types/node':
         specifier: ^25.3.3
@@ -27,11 +27,11 @@ importers:
 
 packages:
 
-  '@arysenai/arysen-mandate@0.1.0':
-    resolution: {integrity: sha512-lrWwQ0kK7fSQZ/0yh+mic7Lo31i2RL+SJICCTsyq7qf/jbtwVqsSfFeNh+cSccps+4DoPxJuvfloObSm8AnK1w==}
+  '@arysenai/arysen-mandate@0.2.0':
+    resolution: {integrity: sha512-EE3tmQ8a+TRC2girt6O3QYErHnJCkZ1/h+4+xuCwEXr03jQNTkCG2i/Z5mm6ddRCXl/DvC8TdoopIGEJByF5ow==}
 
-  '@arysenai/arysen-wallet@0.1.0':
-    resolution: {integrity: sha512-S+2ghdOJj61QYWXrxrse4aDUBm52ymwSOb5/QVRdZBJkBvL8O3Qy3r/x4lAXAIRkr6DAQmaE5xL2FyvMoUbGVA==}
+  '@arysenai/arysen-wallet@0.2.0':
+    resolution: {integrity: sha512-5AnbJ92F/layIjRHkT3DhqllYJiWkZltMgfZoJvdIllhYV8GKd2oWlC5ER5qhY2telUmWyUW5IinhcrspUgCYA==}
 
   '@esbuild/aix-ppc64@0.27.3':
     resolution: {integrity: sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg==}
@@ -582,9 +582,9 @@ packages:
 
 snapshots:
 
-  '@arysenai/arysen-mandate@0.1.0': {}
+  '@arysenai/arysen-mandate@0.2.0': {}
 
-  '@arysenai/arysen-wallet@0.1.0': {}
+  '@arysenai/arysen-wallet@0.2.0': {}
 
   '@esbuild/aix-ppc64@0.27.3':
     optional: true
