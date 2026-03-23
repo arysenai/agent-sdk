@@ -1,6 +1,6 @@
 {
   "name": "@arysenai/agent-sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Arysen Agent SDK — TypeScript wrapper for keymod WASM modules",
   "type": "module",
   "main": "dist/keymod/index.js",
