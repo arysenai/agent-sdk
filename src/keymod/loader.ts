@@ -153,21 +153,28 @@ export function loadMandateModule(
 ): { mandate: MandateExports; bridge: HttpBridge; hash: string } {
   const pkgDir = mandatePkgPath ?? resolveDefaultPkgPath('@arysenai/arysen-mandate');
 
-  // 1. Create the HTTP bridge (Worker + SharedArrayBuffers)
-  const bridge = createHttpBridge(httpTimeout);
+  // 1. Create or reuse the HTTP bridge (Worker + SharedArrayBuffers)
+  // If a bridge already exists with wasmMemory set, reuse it
+  let bridge = globalThis.__arysenHttpBridge;
+  if (!bridge || !bridge.wasmMemory) {
+    bridge = createHttpBridge(httpTimeout);
+  }
 
-  // 2. Hook WebAssembly.Instance to capture WASM memory
-  const OrigInstance = WebAssembly.Instance;
-  (WebAssembly as unknown as Record<string, unknown>).Instance = function (
-    module: WebAssembly.Module,
-    imports: WebAssembly.Imports,
-  ): WebAssembly.Instance {
-    const instance = new OrigInstance(module, imports);
-    if (instance.exports.memory) {
-      bridge.wasmMemory = instance.exports.memory as WebAssembly.Memory;
-    }
-    return instance;
-  };
+  // 2. Hook WebAssembly.Instance to capture WASM memory (only if not already hooked)
+  if (!(WebAssembly.Instance as unknown as { __arysen_hooked?: boolean }).__arysen_hooked) {
+    const OrigInstance = WebAssembly.Instance;
+    (WebAssembly as unknown as Record<string, unknown>).Instance = function (
+      module: WebAssembly.Module,
+      imports: WebAssembly.Imports,
+    ): WebAssembly.Instance {
+      const instance = new OrigInstance(module, imports);
+      if (instance.exports.memory && globalThis.__arysenHttpBridge) {
+        globalThis.__arysenHttpBridge.wasmMemory = instance.exports.memory as WebAssembly.Memory;
+      }
+      return instance;
+    };
+    (WebAssembly.Instance as unknown as { __arysen_hooked?: boolean }).__arysen_hooked = true;
+  }
 
   // 3. Write env shim that uses the global bridge + keystore
   globalThis.__arysenHttpBridge = bridge;

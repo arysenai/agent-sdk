@@ -57,6 +57,13 @@ keymod.verifySession(message, signature, pubKey): boolean
 
 ### Secret Management
 
+Secrets are encrypted with AES-256-GCM and stored persistently in:
+- **macOS**: Keychain Services
+- **Windows**: DPAPI
+- **Linux**: libsecret or encrypted files at `~/.arysen/keys/`
+
+Secrets survive application restarts.
+
 ```ts
 keymod.depositSecret(name: string, value: string): boolean
 keymod.removeSecret(name: string): boolean
