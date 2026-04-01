@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:keychain": "tsx test-keychain-persistence.ts"
   },
   "dependencies": {
     "@arysenai/arysen-mandate": "^0.3.1",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

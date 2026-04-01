@@ -143,9 +143,21 @@ const deal = keymod.createDealOrder({
 ## Testing
 
 ```bash
-pnpm test       # 32 tests
-pnpm test:watch # watch mode
+pnpm test             # 38 unit/integration tests (vitest)
+pnpm test:watch       # watch mode
+pnpm test:keychain    # macOS keychain persistence integration test
 ```
+
+### Keychain Integration Test (macOS only)
+
+The `test:keychain` script verifies real keychain persistence:
+- Deposits secrets and verifies they're written to macOS Keychain
+- Destroys and recreates `ArysenKeymod` to simulate process restart
+- Verifies secrets persist across restarts
+- Tests multiple secrets and removal
+- Cleans up test data automatically
+
+This test uses the actual `security` CLI and reads/writes to your macOS Keychain under the service name `arysen`.
 
 ## Architecture
 
