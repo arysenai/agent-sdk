@@ -4,13 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@arysenai/arysen-mandate': file:../keymod/mandate/pkg
+
 importers:
 
   .:
     dependencies:
       '@arysenai/arysen-mandate':
-        specifier: ^0.3.1
-        version: 0.3.1
+        specifier: file:../keymod/mandate/pkg
+        version: file:../keymod/mandate/pkg
       '@arysenai/arysen-wallet':
         specifier: ^0.3.1
         version: 0.3.1
@@ -30,8 +33,8 @@ importers:
 
 packages:
 
-  '@arysenai/arysen-mandate@0.3.1':
-    resolution: {integrity: sha512-1IVj0eh4MOXi6WCFVJRN22PxX0C4oO/aXBgtwT5r4MWptajUicgOmrUjDL7rK0UNTKhhkvq45pOudy3qsd4uOg==}
+  '@arysenai/arysen-mandate@file:../keymod/mandate/pkg':
+    resolution: {directory: ../keymod/mandate/pkg, type: directory}
 
   '@arysenai/arysen-wallet@0.3.1':
     resolution: {integrity: sha512-UaiMR1RJ6bf7J/DuieQP218i8d6oCR2p4gQeVYisPdxNsmeqLTdwAaWbKl9vtaak9QJS8kKfAUeva/J+rSYcZg==}
@@ -596,7 +599,7 @@ packages:
 
 snapshots:
 
-  '@arysenai/arysen-mandate@0.3.1': {}
+  '@arysenai/arysen-mandate@file:../keymod/mandate/pkg': {}
 
   '@arysenai/arysen-wallet@0.3.1': {}
 

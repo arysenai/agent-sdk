@@ -301,13 +301,14 @@ describe('ArysenKeymod', () => {
   // -- Agent registration --
 
   describe('registerAgent', () => {
-    it('sends hashes in registration request body', async () => {
-      // Intercept fetch to verify the request body includes hashes
+    it('sends signed registration with WASM hashes (requireRegisterAuth)', async () => {
       const originalFetch = globalThis.fetch;
-      let capturedBody: Record<string, unknown> | null = null;
+      let capturedBody: string | null = null;
+      let capturedHeaders: Headers | null = null;
 
       globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
-        capturedBody = JSON.parse(init?.body as string);
+        capturedBody = init?.body as string;
+        capturedHeaders = new Headers(init?.headers);
         return new Response(
           JSON.stringify({ success: true, data: { id: 'test-id', name: 'test', status: 'active', wasm_hash_verified: true } }),
           { status: 201, headers: { 'Content-Type': 'application/json' } },
@@ -315,21 +316,38 @@ describe('ArysenKeymod', () => {
       };
 
       try {
+        const keys = keymod.generateKeys();
         const result = await keymod.registerAgent({
           base_url: 'http://localhost:4000/api/v1',
-          worker_pub_key: 'deadbeef'.repeat(8),
-          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          worker_pub_key: keys.worker_pub_key,
+          session_pub_key: keys.session_pub_key,
           name: 'test-agent',
           description: 'test description',
         });
 
         expect(capturedBody).not.toBeNull();
-        expect(capturedBody!.wasm_wallet_hash).toBe(keymod.getWalletHash());
-        expect(capturedBody!.wasm_mandate_hash).toBe(keymod.getMandateHash());
-        expect(capturedBody!.worker_pub_key).toBe('deadbeef'.repeat(8));
-        expect(capturedBody!.session_pub_key).toBe('cafebabe'.repeat(8) + '0011');
-        expect(capturedBody!.name).toBe('test-agent');
-        expect(capturedBody!.description).toBe('test description');
+        expect(capturedHeaders).not.toBeNull();
+        const parsed = JSON.parse(capturedBody!) as Record<string, unknown>;
+        expect(parsed.wasm_wallet_hash).toBe(keymod.getWalletHash());
+        expect(parsed.wasm_mandate_hash).toBe(keymod.getMandateHash());
+        expect(parsed.worker_pub_key).toBe(keys.worker_pub_key);
+        expect(parsed.session_pub_key).toBe(keys.session_pub_key);
+        expect(parsed.name).toBe('test-agent');
+        expect(parsed.description).toBe('test description');
+
+        const sig = capturedHeaders!.get('X-ARYSEN-Signature');
+        const nonce = capturedHeaders!.get('X-ARYSEN-Nonce');
+        const ts = capturedHeaders!.get('X-ARYSEN-Timestamp');
+        expect(sig).toBeTruthy();
+        expect(nonce).toBeTruthy();
+        expect(ts).toBeTruthy();
+        expect(capturedHeaders!.get('X-ARYSEN-Agent-ID')).toBeNull();
+
+        const message = new TextEncoder().encode(capturedBody! + nonce! + ts!);
+        const sigBytes = new Uint8Array(Buffer.from(sig!, 'hex'));
+        const pubBytes = new Uint8Array(Buffer.from(keys.worker_pub_key, 'hex'));
+        expect(keymod.verifyWorker(message, sigBytes, pubBytes)).toBe(true);
+
         expect(result.id).toBe('test-id');
         expect(result.wasm_hash_verified).toBe(true);
       } finally {
@@ -347,10 +365,11 @@ describe('ArysenKeymod', () => {
       };
 
       try {
+        const keys = keymod.generateKeys();
         await expect(keymod.registerAgent({
           base_url: 'http://localhost:4000/api/v1',
-          worker_pub_key: 'deadbeef'.repeat(8),
-          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          worker_pub_key: keys.worker_pub_key,
+          session_pub_key: keys.session_pub_key,
           name: 'taken-name',
         })).rejects.toThrow('Agent name already taken');
       } finally {
@@ -371,10 +390,11 @@ describe('ArysenKeymod', () => {
       };
 
       try {
+        const keys = keymod.generateKeys();
         await keymod.registerAgent({
           base_url: 'http://localhost:4000/api/v1///',
-          worker_pub_key: 'deadbeef'.repeat(8),
-          session_pub_key: 'cafebabe'.repeat(8) + '0011',
+          worker_pub_key: keys.worker_pub_key,
+          session_pub_key: keys.session_pub_key,
           name: 'test',
         });
         expect(capturedUrl).toBe('http://localhost:4000/api/v1/agents/register');

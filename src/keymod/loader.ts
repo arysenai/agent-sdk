@@ -45,6 +45,7 @@ export interface MandateExports {
   get_spending_summary(): unknown;
   list_secret_names(): unknown;
   mandate_generate_keys(): unknown;
+  mandate_sign_worker_registration(message: Uint8Array): Uint8Array;
   mandate_init(config_json: string): unknown;
   remove_secret(name: string): boolean;
   set_policy(policy_json: string): boolean;

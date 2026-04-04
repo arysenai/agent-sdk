@@ -62,6 +62,22 @@ import type { WalletExports, MandateExports } from './loader.js';
 // We convert them to plain objects recursively for ergonomic TypeScript use.
 // -------------------------------------------------------------------------
 
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Single-use nonce for agent auth headers (UUID when available; otherwise 32 hex chars). */
+function newAgentAuthNonce(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  if (!c?.getRandomValues) {
+    throw new Error('Web Crypto API is required for agent registration nonces');
+  }
+  const buf = new Uint8Array(16);
+  c.getRandomValues(buf);
+  return bytesToHex(buf);
+}
+
 function mapToObject(value: unknown): unknown {
   if (value instanceof Map) {
     const obj: Record<string, unknown> = {};
@@ -139,23 +155,46 @@ export class ArysenKeymod {
   /**
    * Register the agent with the Arysen backend.
    *
+   * Signs the request with the mandate-held worker key (`mandate_sign_worker_registration`) per backend `requireRegisterAuth`:
+   * message = exact JSON body string + nonce + timestamp; headers `X-ARYSEN-Signature`,
+   * `X-ARYSEN-Nonce`, `X-ARYSEN-Timestamp` (no `X-ARYSEN-Agent-ID`).
+   *
    * Sends the worker/session public keys along with load-time WASM hashes
    * so the backend can verify the agent runs audited binaries.
    */
   async registerAgent(params: RegisterAgentParams): Promise<RegisterAgentResult> {
     const url = `${params.base_url.replace(/\/+$/, '')}/agents/register`;
-    const body = JSON.stringify({
+    const bodyObj: Record<string, string> = {
       worker_pub_key: params.worker_pub_key,
       session_pub_key: params.session_pub_key,
       name: params.name,
-      description: params.description,
-      wasm_wallet_hash: this.walletHash,
-      wasm_mandate_hash: this.mandateHash,
-    });
+    };
+    if (params.description !== undefined) {
+      bodyObj.description = params.description;
+    }
+    bodyObj.wasm_wallet_hash = this.walletHash;
+    bodyObj.wasm_mandate_hash = this.mandateHash;
+    const body = JSON.stringify(bodyObj);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = newAgentAuthNonce();
+    const message = body + nonce + timestamp;
+    const msgBytes = new TextEncoder().encode(message);
+    const sig = this.mandate.mandate_sign_worker_registration(msgBytes);
+    if (sig.length !== 64 || sig.every((b) => b === 0)) {
+      throw new Error(
+        'Registration signing failed: no worker key in mandate memory. Call generateKeys() (or mandate_init with keys) in this process before registerAgent.',
+      );
+    }
+    const signatureHex = bytesToHex(sig);
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ARYSEN-Signature': signatureHex,
+        'X-ARYSEN-Nonce': nonce,
+        'X-ARYSEN-Timestamp': timestamp,
+      },
       body,
     });
 

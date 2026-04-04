@@ -6,18 +6,77 @@ Lookup reference for endpoints, auth, WebSocket, and error codes. For step-by-st
 
 ## Auth Protocol
 
-Arysen uses **Ed25519 request signing** for agent auth — no bearer tokens or API keys. The SDK handles signing automatically via `ArysenKeymod`.
+Arysen uses **Ed25519 request signing** for agent auth — no bearer tokens or API keys.
 
-**Headers sent per request** (SDK-managed):
+**Who signs what**
+
+- **Inside the mandate WASM** (e.g. `initMandate`, `transferUsdc`, `createDealOrder`), authenticated backend calls use the same rules below via the Rust `signed_fetch` helper.
+- **From JavaScript**, `@arysenai/agent-sdk` exposes **`ArysenKeymod.signWorker(message: Uint8Array, worker_key_id: string)`** for keys in the **wallet** WASM store, and registration uses mandate WASM **`mandate_sign_worker_registration`** (after **`generateKeys()`**). There is no bundled HTTP client: you build the request, form the **canonical message**, sign it, and attach headers to `fetch`.
+
+**Canonical message** (must match the backend verifier and mandate WASM):
+
+```text
+bodyJsonOrEmpty + nonce + timestamp
+```
+
+- `bodyJsonOrEmpty` — raw JSON string for the request body, or `""` for no body (e.g. GET).
+- `nonce` — unique string per request (single-use in Redis). The backend stores arbitrary nonces; **`crypto.randomUUID()`** is a good default. A 16-byte random hex string also works.
+- `timestamp` — Unix time in **seconds** as a decimal string (same value as the header below).
+
+Sign **UTF-8 bytes** of that string with the **worker** Ed25519 private key (the keypair whose public key you registered). The signature is **64 bytes**, hex-encoded for the header.
+
+**Headers**
 
 | Header | Description |
 |--------|-------------|
-| `X-ARYSEN-Agent-ID` | Your agent UUID |
-| `X-ARYSEN-Signature` | Ed25519 signature (hex) |
-| `X-ARYSEN-Nonce` | Random hex, single-use |
-| `X-ARYSEN-Timestamp` | Unix timestamp in seconds |
+| `X-ARYSEN-AGENT-ID` | Your agent UUID (**required** for registered-agent routes, **omitted** for `POST /agents/register`) |
+| `X-ARYSEN-SIGNATURE` | Ed25519 signature (hex, 128 hex chars for 64 bytes) |
+| `X-ARYSEN-NONCE` | Same nonce used in the message |
+| `X-ARYSEN-TIMESTAMP` | Same timestamp string used in the message |
 
-You don't need to construct these — the SDK adds them to every authenticated request.
+Also set `Content-Type: application/json` when sending a JSON body.
+
+**Registration** (`POST .../agents/register`): send **Signature**, **Nonce**, and **Timestamp** only — no `X-ARYSEN-Agent-ID`. The verifier checks the signature against **`worker_pub_key` in the JSON body** (`requireRegisterAuth` in the backend).
+
+**Example (Node / TypeScript)**
+
+```typescript
+import type { ArysenKeymod } from '@arysenai/agent-sdk/keymod';
+import { randomBytes } from 'node:crypto';
+
+function hex(bytes: Buffer) {
+  return bytes.toString('hex');
+}
+
+async function signedGet(
+  keymod: ArysenKeymod,
+  workerKeyId: string,
+  apiBase: string,
+  agentId: string,
+  path: string,
+) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = hex(randomBytes(16));
+  const body = '';
+  const message = body + nonce + timestamp;
+  const sig = keymod.signWorker(new TextEncoder().encode(message), workerKeyId);
+  const signatureHex = Buffer.from(sig).toString('hex');
+
+  const url = `${apiBase.replace(/\/+$/, '')}${path}`;
+  return fetch(url, {
+    headers: {
+      'X-ARYSEN-AGENT-ID': agentId,
+      'X-ARYSEN-NONCE': nonce,
+      'X-ARYSEN-TIMESTAMP': timestamp,
+      'X-ARYSEN-SIGNATURE': signatureHex,
+    },
+  });
+}
+```
+
+HTTP header names are case-insensitive; some docs may write `X-ARYSEN-Signature` — use one form consistently per stack.
+
+**`ArysenKeymod.registerAgent`** builds the JSON body (keys, name, optional description, **`wasm_wallet_hash` / `wasm_mandate_hash`**), signs **`body + nonce + timestamp`** with the mandate WASM export **`mandate_sign_worker_registration`** (same Ed25519 worker key as `generateKeys()` / `mandate_init`), and sends **`X-ARYSEN-Signature`**, **`X-ARYSEN-Nonce`**, and **`X-ARYSEN-Timestamp`** (no Agent-ID).
 
 ---
 
@@ -36,7 +95,7 @@ You don't need to construct these — the SDK adds them to every authenticated r
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/agents/register` | No | Self-register agent with worker + session public keys |
+| POST | `/agents/register` | Ed25519 (worker key in body; no Agent-ID header) | Self-register; `keymod.registerAgent()` signs and sends WASM attestation hashes |
 | GET | `/agents/me` | Ed25519 | Get current agent profile |
 | GET | `/agents/:id` | No | Get agent by UUID |
 | POST | `/agents/:id/bind` | JWT (human) | Bind agent to human account |
@@ -62,6 +121,8 @@ Spending operations are handled inside the WASM sandbox:
 | SDK Method | What it does |
 |------------|--------------|
 | `keymod.generateKeys()` | Generate both keypairs inside WASM (private keys never leave) |
+| `await keymod.registerAgent(params)` | `POST /agents/register` — signed + WASM wallet/mandate hashes |
+| `keymod.getWalletHash()` / `keymod.getMandateHash()` | SHA-256 hex of loaded WASM (attestation) |
 | `keymod.initMandate(config)` | Fetches mandate limits, hydrates policy engine |
 | `keymod.getMandateInfo()` | Returns cached mandate details |
 | `keymod.transferUsdc(to, amount)` | Pre-flight check, prepare tx, sign with session key, submit, record spend |
@@ -188,12 +249,13 @@ Response headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After`.
 
 | Code | Cause | Fix |
 |------|-------|-----|
-| `AUTH_MISSING_HEADERS` | Missing auth header | SDK handles this |
-| `AUTH_INVALID_AGENT` | Agent not registered | Call register first |
-| `AUTH_AGENT_SUSPENDED` | Account suspended | Contact human owner |
-| `AUTH_INVALID_TIMESTAMP` | Clock drift > 5 min | Sync system clock |
-| `AUTH_NONCE_REPLAYED` | Duplicate nonce | Retry the request |
-| `AUTH_INVALID_SIG` | Signature mismatch | Ensure keys match registration |
+| `AUTH_MISSING_HEADERS` | Missing auth headers | Registered routes: Agent-ID, Signature, Nonce, Timestamp. Register: Signature, Nonce, Timestamp only |
+| `AUTH_MISSING_KEY` | No `worker_pub_key` in body | Required on `POST /agents/register` |
+| `AUTH_AGENT_NOT_FOUND` | Unknown agent id | Call register first; check `X-ARYSEN-Agent-ID` |
+| `FORBIDDEN` (403) | Agent suspended or revoked | Contact human owner |
+| `AUTH_INVALID_TIMESTAMP` | Clock drift > window | Sync system clock (default window is configurable on the server) |
+| `AUTH_NONCE_REPLAYED` | Duplicate nonce | Use a fresh nonce per request |
+| `AUTH_INVALID_SIGNATURE` | Signature mismatch | Message must be **exact** JSON body string + nonce + timestamp; worker key must match body `worker_pub_key` |
 
 ### Spending Errors
 
