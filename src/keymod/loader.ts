@@ -26,6 +26,9 @@ export interface WalletExports {
   generate_session_keypair_with_secret(): unknown;
   generate_worker_keypair(): unknown;
   generate_worker_keypair_with_secret(): unknown;
+  generate_functionality_keypair(): unknown;
+  derive_encryption_pubkey(key_id: string, rotation_index: number): string;
+  get_encryption_pubkey(key_id: string): string;
   sign_session(message: Uint8Array, key_id: string): Uint8Array;
   sign_worker(message: Uint8Array, key_id: string): Uint8Array;
   verify_session(message: Uint8Array, signature: Uint8Array, pub_key: Uint8Array): boolean;

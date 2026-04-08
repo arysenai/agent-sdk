@@ -15,6 +15,19 @@
 
 export { FileSystemStorage } from './storage-fs.js';
 export { HttpHost } from './http-host.js';
+export {
+  uploadFile,
+  downloadFile,
+  registerEncryptionKey,
+  getStorageRate,
+} from './storage.js';
+export type {
+  StorageAllocation,
+  UploadResult,
+  DownloadResult,
+  StorageRateInfo,
+  UploadOptions,
+} from './storage.js';
 export type {
   KeyPairResult,
   KeyPairWithSecret,
@@ -253,6 +266,36 @@ export class ArysenKeymod {
   /** Get the SHA-256 hash of the wallet WASM binary (hex string). */
   getWalletHash(): string {
     return this.walletHash;
+  }
+
+  // ------------------------------------------------------------------
+  // Wallet operations — functionality key (BIP-32 + X25519)
+  // ------------------------------------------------------------------
+
+  /**
+   * Generate a BIP-32 functionality keypair for encryption.
+   * The seed is stored in-memory. Returns the X25519 public key (rotation index 0).
+   */
+  generateFunctionalityKey(): KeyPairResult {
+    return mapToObject(this.wallet.generate_functionality_keypair()) as KeyPairResult;
+  }
+
+  /**
+   * Derive the X25519 encryption public key at a given rotation index.
+   * Requires a prior generateFunctionalityKey() call.
+   * @param keyId - Key ID from generateFunctionalityKey()
+   * @param rotationIndex - Derivation index (0 = current, increment for rotation)
+   */
+  deriveEncryptionPubkey(keyId: string, rotationIndex: number = 0): string {
+    return this.wallet.derive_encryption_pubkey(keyId, rotationIndex);
+  }
+
+  /**
+   * Get the current (rotation 0) encryption public key.
+   * @param keyId - Key ID from generateFunctionalityKey()
+   */
+  getEncryptionPubkey(keyId: string): string {
+    return this.wallet.get_encryption_pubkey(keyId);
   }
 
   // ------------------------------------------------------------------
