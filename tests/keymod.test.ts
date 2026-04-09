@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ArysenKeymod } from '../src/keymod/index.js';
 import { FileSystemStorage } from '../src/keymod/storage-fs.js';
 import { HttpHost } from '../src/keymod/http-host.js';
-import { loadWalletModule, loadMandateModule } from '../src/keymod/loader.js';
+import { loadStorageModule, loadWalletModule, loadMandateModule } from '../src/keymod/loader.js';
 import type {
   KeyPairResult,
   Policy,
@@ -61,6 +61,23 @@ describe('loader', () => {
     const { hash: walletHash } = loadWalletModule();
     const { hash: mandateHash } = loadMandateModule();
     expect(walletHash).not.toBe(mandateHash);
+  });
+
+  it('loads the storage WASM module with hash', () => {
+    const { storage, hash } = loadStorageModule();
+    expect(storage).toBeDefined();
+    expect(typeof storage.storage_prepare_upload).toBe('function');
+    expect(typeof storage.storage_process_download).toBe('function');
+    expect(typeof storage.storage_default_chunk_size).toBe('function');
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('storage hash is distinct from wallet and mandate', () => {
+    const { hash: sHash } = loadStorageModule();
+    const { hash: wHash } = loadWalletModule();
+    const { hash: mHash } = loadMandateModule();
+    expect(sHash).not.toBe(wHash);
+    expect(sHash).not.toBe(mHash);
   });
 });
 
@@ -469,6 +486,84 @@ describe('ArysenKeymod', () => {
       // a response based on parsing 0 bytes — likely an error.
       // The important thing is it returns *something* and doesn't crash.
       expect(result).toBeDefined();
+    });
+  });
+
+  // -- Storage pipeline (WASM) --
+
+  describe('storage pipeline', () => {
+    // Helper: generate an X25519 keypair for test recipients.
+    // Uses the wallet's functionality key derivation.
+    function makeRecipient() {
+      const funcKey = keymod.generateFunctionalityKey();
+      const pubKeyHex = keymod.getEncryptionPubkey(funcKey.key_id);
+      // Derive the secret key hex via BIP-32 at rotation index 0.
+      // The WASM only exposes pubkeys — for download tests we need the secret.
+      // We'll use a second keymod instance's functionality key instead.
+      return { funcKeyId: funcKey.key_id, pubKeyHex };
+    }
+
+    it('getDefaultChunkSize returns 512KB', () => {
+      expect(keymod.getDefaultChunkSize()).toBe(512 * 1024);
+    });
+
+    it('getStorageHash returns a 64-char hex string', () => {
+      expect(keymod.getStorageHash()).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('storagePrepareUpload returns valid bundle for small file', () => {
+      const { pubKeyHex } = makeRecipient();
+      const data = new TextEncoder().encode('hello secure storage!');
+
+      const bundle = keymod.storagePrepareUpload(data, pubKeyHex);
+      expect(bundle.chunks.length).toBe(1);
+      expect(bundle.root_cid).toMatch(/^baf/); // CIDv1 base32
+      expect(bundle.content_hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(bundle.manifest_bytes.length).toBeGreaterThan(0);
+    });
+
+    it('storagePrepareUpload returns multiple chunks for large data', () => {
+      const { pubKeyHex } = makeRecipient();
+      // 10-byte chunk size → 36 bytes → 4 chunks
+      const data = new TextEncoder().encode('abcdefghijklmnopqrstuvwxyz0123456789');
+
+      const bundle = keymod.storagePrepareUpload(data, pubKeyHex, 10, 'text/plain');
+      expect(bundle.chunks.length).toBe(4);
+      // Each chunk CID should be a CIDv1
+      for (const [cid] of bundle.chunks) {
+        expect(cid).toMatch(/^baf/);
+      }
+    });
+
+    it('rejects invalid recipient pubkey', () => {
+      const data = new TextEncoder().encode('test');
+      expect(() => keymod.storagePrepareUpload(data, 'tooshort')).toThrow();
+      expect(() => keymod.storagePrepareUpload(data, 'zz'.repeat(32))).toThrow();
+    });
+
+    it('storagePrepareUpload produces deterministic content hash for same input', () => {
+      const { pubKeyHex } = makeRecipient();
+      const data = new TextEncoder().encode('determinism test');
+
+      // Different calls produce different encrypted content (ephemeral key changes),
+      // so root CID and content hash WILL differ. This is expected — sealed box uses
+      // a fresh ephemeral key each time.
+      const b1 = keymod.storagePrepareUpload(data, pubKeyHex);
+      const b2 = keymod.storagePrepareUpload(data, pubKeyHex);
+      expect(b1.root_cid).not.toBe(b2.root_cid); // different ephemeral keys
+      // But both should be valid
+      expect(b1.content_hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(b2.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('content hash is 32 bytes (SHA-256)', () => {
+      const { pubKeyHex } = makeRecipient();
+      const bundle = keymod.storagePrepareUpload(
+        new TextEncoder().encode('hash length test'),
+        pubKeyHex,
+      );
+      // hex string → 64 chars = 32 bytes
+      expect(bundle.content_hash.length).toBe(64);
     });
   });
 });

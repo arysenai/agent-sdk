@@ -21,11 +21,30 @@ import { platformRead, platformWrite } from './keystore.js';
 // Wallet module types (mirrors arysen_wallet.d.ts)
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// Storage module types (mirrors arysen_storage.d.ts)
+// -------------------------------------------------------------------------
+
+export interface StorageExports {
+  storage_init_session(): string;
+  storage_prepare_upload(data: Uint8Array, recipient_pubkey_hex: string, chunk_size: number, mime_type: string): unknown;
+  storage_process_download(manifest_bytes: Uint8Array, chunks_json: string, wrapped_key_hex: string): unknown;
+  storage_default_chunk_size(): number;
+}
+
+// -------------------------------------------------------------------------
+// Wallet module types (mirrors arysen_wallet.d.ts)
+// -------------------------------------------------------------------------
+
 export interface WalletExports {
   generate_session_keypair(): unknown;
   generate_session_keypair_with_secret(): unknown;
   generate_worker_keypair(): unknown;
   generate_worker_keypair_with_secret(): unknown;
+  generate_functionality_keypair(): unknown;
+  derive_encryption_pubkey(key_id: string, rotation_index: number): string;
+  get_encryption_pubkey(key_id: string): string;
+  wrap_decryption_key(func_key_id: string, rotation_index: number, target_pubkey_hex: string): string;
   sign_session(message: Uint8Array, key_id: string): Uint8Array;
   sign_worker(message: Uint8Array, key_id: string): Uint8Array;
   verify_session(message: Uint8Array, signature: Uint8Array, pub_key: Uint8Array): boolean;
@@ -128,6 +147,20 @@ function createHttpBridge(httpTimeout?: number): HttpBridge {
 // -------------------------------------------------------------------------
 
 /**
+ * Load the storage WASM module.
+ *
+ * Pure computation — no host imports. Provides chunking, encryption,
+ * CID computation, and manifest building for secure file exchange.
+ */
+export function loadStorageModule(storagePkgPath?: string): { storage: StorageExports; hash: string } {
+  const pkgDir = storagePkgPath ?? resolveDefaultPkgPath('@arysenai/arysen-storage');
+  const requireFn = createRequire(resolve(pkgDir, 'package.json'));
+  const mod = requireFn('./arysen_storage.js') as StorageExports;
+  const hash = computeWasmHash(resolve(pkgDir, 'arysen_storage_bg.wasm'));
+  return { storage: mod, hash };
+}
+
+/**
  * Load the wallet WASM module.
  *
  * The wallet package has no custom host imports — it only needs the standard
@@ -198,9 +231,12 @@ export function loadMandateModule(
     return origResolve.call(this, request, parent, isMain, options);
   };
 
-  // 5. Clear require cache for env shim (force reload with new source)
+  // 5. Clear require cache for env shim AND mandate module (force fresh WASM instance
+  //    so the WebAssembly.Instance hook captures the correct WASM memory)
   const requireFn = createRequire(resolve(pkgDir, 'package.json'));
   delete requireFn.cache?.[envShimPath];
+  const mandateJsPath = requireFn.resolve('./arysen_mandate.js');
+  delete requireFn.cache?.[mandateJsPath];
 
   try {
     const mandate = requireFn('./arysen_mandate.js') as MandateExports;

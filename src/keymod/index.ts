@@ -15,6 +15,19 @@
 
 export { FileSystemStorage } from './storage-fs.js';
 export { HttpHost } from './http-host.js';
+export {
+  uploadFile,
+  downloadFile,
+  registerEncryptionKey,
+  getStorageRate,
+} from './storage.js';
+export type {
+  StorageAllocation,
+  UploadResult,
+  DownloadResult,
+  StorageRateInfo,
+  UploadOptions,
+} from './storage.js';
 export type {
   KeyPairResult,
   KeyPairWithSecret,
@@ -34,6 +47,7 @@ export type {
   KeymodOptions,
   RegisterAgentParams,
   RegisterAgentResult,
+  StoragePrepareResult,
 } from './types.js';
 
 import type {
@@ -52,10 +66,11 @@ import type {
   KeymodOptions,
   RegisterAgentParams,
   RegisterAgentResult,
+  StoragePrepareResult,
 } from './types.js';
 
-import { loadWalletModule, loadMandateModule, destroyBridge } from './loader.js';
-import type { WalletExports, MandateExports } from './loader.js';
+import { loadStorageModule, loadWalletModule, loadMandateModule, destroyBridge } from './loader.js';
+import type { StorageExports, WalletExports, MandateExports } from './loader.js';
 
 // -------------------------------------------------------------------------
 // serde-wasm-bindgen returns JS Map objects for Rust structs/hashmaps.
@@ -103,38 +118,52 @@ interface Bridge {
 export class ArysenKeymod {
   private readonly wallet: WalletExports;
   private readonly mandate: MandateExports;
+  private readonly storageWasm: StorageExports;
   private readonly walletHash: string;
   private readonly mandateHash: string;
+  private readonly storageHash: string;
+  /** Storage module's session public key (hex). Used by wrapDecryptionKey. */
+  private readonly storageSessionPubKey: string;
   private bridge: Bridge | null;
 
   private constructor(
     wallet: WalletExports,
     mandate: MandateExports,
+    storageWasm: StorageExports,
     bridge: Bridge,
     walletHash: string,
     mandateHash: string,
+    storageHash: string,
+    storageSessionPubKey: string,
   ) {
     this.wallet = wallet;
     this.mandate = mandate;
+    this.storageWasm = storageWasm;
     this.bridge = bridge;
     this.walletHash = walletHash;
     this.mandateHash = mandateHash;
+    this.storageHash = storageHash;
+    this.storageSessionPubKey = storageSessionPubKey;
   }
 
   /**
-   * Initialize both WASM modules and return a ready-to-use instance.
+   * Initialize all three WASM modules and return a ready-to-use instance.
    *
    * Spawns a Worker thread for HTTP bridging — call `destroy()` when done
    * to clean up. The worker is unref'd so it won't keep the process alive
    * if you forget.
    */
   static async init(options?: KeymodOptions): Promise<ArysenKeymod> {
+    const { storage, hash: sHash } = loadStorageModule(options?.storageWasmPath);
     const { wallet, hash: wHash } = loadWalletModule(options?.walletWasmPath);
     const { mandate, bridge, hash: mHash } = loadMandateModule(
       options?.mandateWasmPath,
       options?.httpTimeout,
     );
-    return new ArysenKeymod(wallet, mandate, bridge, wHash, mHash);
+    // Initialize storage session — generates X25519 keypair inside WASM,
+    // returns the public key so wallet can encrypt private keys for it.
+    const sessionPubKey = storage.storage_init_session();
+    return new ArysenKeymod(wallet, mandate, storage, bridge, wHash, mHash, sHash, sessionPubKey);
   }
 
   /**
@@ -256,6 +285,36 @@ export class ArysenKeymod {
   }
 
   // ------------------------------------------------------------------
+  // Wallet operations — functionality key (BIP-32 + X25519)
+  // ------------------------------------------------------------------
+
+  /**
+   * Generate a BIP-32 functionality keypair for encryption.
+   * The seed is stored in-memory. Returns the X25519 public key (rotation index 0).
+   */
+  generateFunctionalityKey(): KeyPairResult {
+    return mapToObject(this.wallet.generate_functionality_keypair()) as KeyPairResult;
+  }
+
+  /**
+   * Derive the X25519 encryption public key at a given rotation index.
+   * Requires a prior generateFunctionalityKey() call.
+   * @param keyId - Key ID from generateFunctionalityKey()
+   * @param rotationIndex - Derivation index (0 = current, increment for rotation)
+   */
+  deriveEncryptionPubkey(keyId: string, rotationIndex: number = 0): string {
+    return this.wallet.derive_encryption_pubkey(keyId, rotationIndex);
+  }
+
+  /**
+   * Get the current (rotation 0) encryption public key.
+   * @param keyId - Key ID from generateFunctionalityKey()
+   */
+  getEncryptionPubkey(keyId: string): string {
+    return this.wallet.get_encryption_pubkey(keyId);
+  }
+
+  // ------------------------------------------------------------------
   // Mandate operations — secrets
   // ------------------------------------------------------------------
 
@@ -319,6 +378,98 @@ export class ArysenKeymod {
   /** Get the SHA-256 hash of the mandate WASM binary (hex string). */
   getMandateHash(): string {
     return this.mandateHash;
+  }
+
+  /** Get the SHA-256 hash of the storage WASM binary (hex string). */
+  getStorageHash(): string {
+    return this.storageHash;
+  }
+
+  // ------------------------------------------------------------------
+  // Storage operations — encrypted file pipeline
+  // ------------------------------------------------------------------
+
+  /** Get the default chunk size in bytes (512KB). */
+  getDefaultChunkSize(): number {
+    return this.storageWasm.storage_default_chunk_size();
+  }
+
+  /**
+   * Prepare a file for encrypted upload via WASM pipeline.
+   *
+   * Chunks the file, encrypts each chunk with a sealed-box key derived
+   * from the recipient's X25519 public key, computes CIDs, and builds
+   * a manifest. Returns everything needed for S3 upload.
+   *
+   * @param data - Raw file bytes
+   * @param recipientPubKeyHex - Recipient's X25519 public key (64-char hex)
+   * @param chunkSize - Bytes per chunk (default: 512KB)
+   * @param mimeType - MIME type (default: "application/octet-stream")
+   */
+  storagePrepareUpload(
+    data: Uint8Array,
+    recipientPubKeyHex: string,
+    chunkSize?: number,
+    mimeType?: string,
+  ): StoragePrepareResult {
+    const result = this.storageWasm.storage_prepare_upload(
+      data,
+      recipientPubKeyHex,
+      chunkSize ?? this.storageWasm.storage_default_chunk_size(),
+      mimeType ?? 'application/octet-stream',
+    );
+    const obj = mapToObject(result) as Record<string, unknown>;
+    if (obj.error) throw new Error(obj.error as string);
+    return obj as unknown as StoragePrepareResult;
+  }
+
+  /**
+   * Wrap an X25519 decryption key for secure transfer to the storage WASM module.
+   *
+   * The wallet derives the private key from the BIP-32 seed, encrypts it
+   * using the storage module's session public key (sealed-box), and returns
+   * the opaque ciphertext. The raw private key never enters JavaScript.
+   *
+   * @param funcKeyId - Key ID from generateFunctionalityKey()
+   * @param rotationIndex - BIP-32 rotation index (0 = current)
+   */
+  wrapDecryptionKey(funcKeyId: string, rotationIndex: number = 0): string {
+    const wrapped = this.wallet.wrap_decryption_key(
+      funcKeyId,
+      rotationIndex,
+      this.storageSessionPubKey,
+    );
+    if (!wrapped) {
+      throw new Error('Failed to wrap decryption key — check funcKeyId and rotation index');
+    }
+    return wrapped;
+  }
+
+  /**
+   * Process a downloaded file via WASM pipeline.
+   *
+   * Verifies chunk CIDs, decrypts, and reassembles the original file.
+   * The wrapped key is unwrapped inside the storage WASM module using
+   * its session secret — the raw private key never enters JavaScript.
+   *
+   * @param manifestBytes - Encoded manifest
+   * @param chunks - Array of [cid_string, encrypted_bytes] pairs
+   * @param wrappedKeyHex - Wrapped decryption key (from wrapDecryptionKey)
+   */
+  storageProcessDownload(
+    manifestBytes: Uint8Array,
+    chunks: Array<[string, number[]]>,
+    wrappedKeyHex: string,
+  ): Uint8Array {
+    const chunksJson = JSON.stringify(chunks);
+    const result = this.storageWasm.storage_process_download(
+      manifestBytes,
+      chunksJson,
+      wrappedKeyHex,
+    );
+    const obj = mapToObject(result) as Record<string, unknown>;
+    if (obj.error) throw new Error(obj.error as string);
+    return new Uint8Array(obj.data as number[]);
   }
 
   // ------------------------------------------------------------------
