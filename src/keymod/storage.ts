@@ -10,6 +10,8 @@
  * recipient can re-derive old keys from their BIP-32 seed.
  */
 
+import type { ArysenKeymod } from './index.js';
+
 export interface StorageAllocation {
   id: string;
   prefix: string;
@@ -63,6 +65,7 @@ export interface UploadOptions {
  * 4. Uploads encrypted chunks + manifest to S3 via pre-signed URLs
  * 5. Marks allocation complete
  *
+ * @param keymod - ArysenKeymod instance (provides WASM storage pipeline)
  * @param data - Raw file bytes
  * @param recipientPubKeyHex - Recipient's X25519 public key (64-char hex).
  *   For deal deliveries, use the key from the deal record, not the agent's current key.
@@ -71,6 +74,7 @@ export interface UploadOptions {
  * @param opts - Upload options
  */
 export async function uploadFile(
+  keymod: ArysenKeymod,
   data: Uint8Array,
   recipientPubKeyHex: string,
   baseUrl: string,
@@ -84,45 +88,180 @@ export async function uploadFile(
     );
   }
 
-  // TODO: Once WASM storage crate is built and linked:
-  // 1. Call WASM storage_prepare_upload(data, recipientPubKey) → UploadBundle
-  // 2. POST /storage/allocate → allocation
-  // 3. GET /storage/:id/upload-urls → pre-signed URLs
-  // 4. PUT each chunk to S3
-  // 5. POST /storage/:id/complete
-  // 6. Return { root_cid, content_hash, allocation_id, chunk_count, total_bytes }
+  const mimeType = opts?.mime_type ?? 'application/octet-stream';
 
-  throw new Error('Storage WASM module not yet linked. Run wasm-pack build in keymod/storage first.');
+  // 1. WASM: chunk, encrypt, compute CIDs, build manifest
+  const bundle = keymod.storagePrepareUpload(data, recipientPubKeyHex, undefined, mimeType);
+
+  // 2. Calculate total encrypted size (chunks + manifest)
+  let totalBytes = bundle.manifest_bytes.length;
+  for (const [, chunkBytes] of bundle.chunks) {
+    totalBytes += chunkBytes.length;
+  }
+  const sizeMb = opts?.size_mb ?? Math.max(1, Math.ceil(totalBytes / (1024 * 1024)));
+
+  // 3. Backend: allocate storage
+  const apiBase = baseUrl.replace(/\/+$/, '');
+  const allocBody = JSON.stringify({
+    size_mb: sizeMb,
+    upload_window_hours: opts?.upload_window_hours ?? 24,
+    mime_type: mimeType,
+  });
+  const allocRes = await fetch(`${apiBase}/storage/allocate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...agentAuthHeaders(allocBody) },
+    body: allocBody,
+  });
+  const allocJson = await allocRes.json() as { success: boolean; data?: StorageAllocation; message?: string };
+  if (!allocRes.ok || !allocJson.success) {
+    throw new Error(allocJson.message ?? `Storage allocation failed (${allocRes.status})`);
+  }
+  const allocation = allocJson.data!;
+
+  // 4. Backend: get pre-signed upload URLs
+  const chunkKeys = bundle.chunks.map(([cid]) => cid);
+  chunkKeys.push('_manifest.json'); // manifest key
+  const keysParam = encodeURIComponent(chunkKeys.join(','));
+  const urlsRes = await fetch(`${apiBase}/storage/${allocation.id}/upload-urls?keys=${keysParam}`, {
+    headers: agentAuthHeaders(''),
+  });
+  const urlsJson = await urlsRes.json() as { success: boolean; data?: { prefix: string; keys: string[]; urls?: Record<string, string> }; message?: string };
+  if (!urlsRes.ok || !urlsJson.success) {
+    throw new Error(urlsJson.message ?? `Failed to get upload URLs (${urlsRes.status})`);
+  }
+
+  // 5. Upload chunks + manifest via pre-signed URLs (or direct if available)
+  const uploadUrls = urlsJson.data?.urls;
+  if (uploadUrls) {
+    // Real S3 pre-signed URLs available
+    for (const [cid, chunkBytes] of bundle.chunks) {
+      const url = uploadUrls[cid];
+      if (!url) throw new Error(`No upload URL for chunk ${cid}`);
+      const res = await fetch(url, { method: 'PUT', body: new Uint8Array(chunkBytes) });
+      if (!res.ok) throw new Error(`S3 upload failed for chunk ${cid} (${res.status})`);
+    }
+    // Upload manifest
+    const manifestUrl = uploadUrls['_manifest.json'];
+    if (!manifestUrl) throw new Error('No upload URL for manifest');
+    const res = await fetch(manifestUrl, { method: 'PUT', body: new Uint8Array(bundle.manifest_bytes) });
+    if (!res.ok) throw new Error(`S3 upload failed for manifest (${res.status})`);
+  }
+  // If no pre-signed URLs (dev mode), skip S3 upload — backend stores metadata only
+
+  // 6. Backend: mark allocation complete
+  const completeBody = JSON.stringify({
+    used_bytes: totalBytes,
+    root_cid: bundle.root_cid,
+  });
+  const completeRes = await fetch(`${apiBase}/storage/${allocation.id}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...agentAuthHeaders(completeBody) },
+    body: completeBody,
+  });
+  const completeJson = await completeRes.json() as { success: boolean; message?: string };
+  if (!completeRes.ok || !completeJson.success) {
+    throw new Error(completeJson.message ?? `Storage completion failed (${completeRes.status})`);
+  }
+
+  return {
+    root_cid: bundle.root_cid,
+    content_hash: bundle.content_hash,
+    allocation_id: allocation.id,
+    chunk_count: bundle.chunks.length,
+    total_bytes: totalBytes,
+  };
 }
 
 /**
  * Download and decrypt a file from secure storage.
  *
- * 1. Gets download URLs from backend
- * 2. Downloads manifest + chunks from S3
- * 3. Calls WASM to verify CIDs, decrypt, reassemble
+ * 1. Wraps the decryption key inside WASM (private key never enters JS)
+ * 2. Gets download access from backend
+ * 3. Downloads manifest + chunks from S3 via pre-signed URLs
+ * 4. Passes wrapped key to storage WASM for decryption
  *
+ * @param keymod - ArysenKeymod instance (provides WASM storage pipeline)
  * @param rootCid - Root CID of the file
- * @param recipientSecretHex - Recipient's X25519 private key (64-char hex, derived from BIP-32 seed)
+ * @param funcKeyId - Functionality key ID (from generateFunctionalityKey)
+ * @param rotationIndex - BIP-32 rotation index (0 = current key)
  * @param baseUrl - Backend API base URL
  * @param agentAuthHeaders - Function returning Ed25519 auth headers for backend calls
  * @param allocationId - Optional allocation ID (faster lookup than CID)
  */
 export async function downloadFile(
+  keymod: ArysenKeymod,
   rootCid: string,
-  recipientSecretHex: string,
+  funcKeyId: string,
+  rotationIndex: number,
   baseUrl: string,
   agentAuthHeaders: (body: string) => Record<string, string>,
   allocationId?: string,
 ): Promise<DownloadResult> {
-  // TODO: Once WASM storage crate is built and linked:
-  // 1. POST /storage/access → download URLs
-  // 2. GET manifest from S3
-  // 3. GET each chunk from S3
-  // 4. Call WASM storage_process_download(manifest, chunks, recipientSecret)
-  // 5. Return { data, root_cid, file_size, mime_type }
+  const apiBase = baseUrl.replace(/\/+$/, '');
 
-  throw new Error('Storage WASM module not yet linked. Run wasm-pack build in keymod/storage first.');
+  // 1. Backend: request download access
+  const accessBody = JSON.stringify(
+    allocationId ? { allocation_id: allocationId } : { root_cid: rootCid },
+  );
+  const accessRes = await fetch(`${apiBase}/storage/access`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...agentAuthHeaders(accessBody) },
+    body: accessBody,
+  });
+  const accessJson = await accessRes.json() as {
+    success: boolean;
+    data?: { prefix: string; root_cid: string; urls?: Record<string, string> };
+    message?: string;
+  };
+  if (!accessRes.ok || !accessJson.success) {
+    throw new Error(accessJson.message ?? `Storage access failed (${accessRes.status})`);
+  }
+  const access = accessJson.data!;
+  const downloadUrls = access.urls;
+
+  if (!downloadUrls) {
+    throw new Error(
+      'Download URLs not available. S3 pre-signed URL generation is not yet configured on the backend.',
+    );
+  }
+
+  // 2. Download manifest
+  const manifestUrl = downloadUrls['_manifest.json'];
+  if (!manifestUrl) throw new Error('No download URL for manifest');
+  const manifestRes = await fetch(manifestUrl);
+  if (!manifestRes.ok) throw new Error(`Failed to download manifest (${manifestRes.status})`);
+  const manifestBytes = new Uint8Array(await manifestRes.arrayBuffer());
+
+  // Parse manifest to get chunk CIDs
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as {
+    chunk_cids: string[];
+    file_size: number;
+    mime_type: string;
+  };
+
+  // 3. Download chunks in order
+  const chunks: Array<[string, number[]]> = [];
+  for (const cid of manifest.chunk_cids) {
+    const chunkUrl = downloadUrls[cid];
+    if (!chunkUrl) throw new Error(`No download URL for chunk ${cid}`);
+    const chunkRes = await fetch(chunkUrl);
+    if (!chunkRes.ok) throw new Error(`Failed to download chunk ${cid} (${chunkRes.status})`);
+    const chunkBytes = new Uint8Array(await chunkRes.arrayBuffer());
+    chunks.push([cid, Array.from(chunkBytes)]);
+  }
+
+  // 4. Wrap decryption key (wallet → storage, private key never enters JS)
+  const wrappedKey = keymod.wrapDecryptionKey(funcKeyId, rotationIndex);
+
+  // 5. WASM: verify CIDs, decrypt, reassemble (using wrapped key)
+  const decrypted = keymod.storageProcessDownload(manifestBytes, chunks, wrappedKey);
+
+  return {
+    data: decrypted,
+    root_cid: access.root_cid,
+    file_size: manifest.file_size,
+    mime_type: manifest.mime_type,
+  };
 }
 
 /**

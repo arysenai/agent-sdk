@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@arysenai/arysen-mandate": "^0.3.2",
+    "@arysenai/arysen-storage": "^0.1.0",
     "@arysenai/arysen-wallet": "^0.3.1"
   },
   "devDependencies": {
@@ -33,7 +34,9 @@
       "esbuild"
     ],
     "overrides": {
-      "@arysenai/arysen-mandate": "file:../keymod/mandate/pkg"
+      "@arysenai/arysen-mandate": "file:../keymod/mandate/pkg",
+      "@arysenai/arysen-storage": "file:../keymod/storage/pkg",
+      "@arysenai/arysen-wallet": "file:../keymod/wallet/pkg"
     }
   }
 }

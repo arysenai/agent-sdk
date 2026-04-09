@@ -135,6 +135,20 @@ export interface KeymodOptions {
   walletWasmPath?: string;
   /** Override path to the mandate WASM pkg directory. */
   mandateWasmPath?: string;
+  /** Override path to the storage WASM pkg directory. */
+  storageWasmPath?: string;
+}
+
+/** Result of WASM storage prepare_upload. */
+export interface StoragePrepareResult {
+  /** Encrypted chunks: [[cid_string, encrypted_bytes], ...] */
+  chunks: Array<[string, number[]]>;
+  /** Encoded manifest bytes. */
+  manifest_bytes: number[];
+  /** Root CID of the manifest (base32 multibase). */
+  root_cid: string;
+  /** SHA-256 hex digest of the manifest (for on-chain bytes32). */
+  content_hash: string;
 }
 
 /** Parameters for agent registration with the Arysen backend. */
